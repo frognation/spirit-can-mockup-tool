@@ -2,6 +2,12 @@
 
 Local dev: npm install && npm run dev, then open http://localhost:3000
 
+## Versioning
+
+- Archived `1.0` baseline: Git tag `v1.0.0`
+- Maintenance branch for `1.x`: `release/1.0`
+- Current development line on `main`: `2.0.0`
+
 ## Publishing (Vercel + GitHub Pages redirect)
 
 ### What happens when you push
