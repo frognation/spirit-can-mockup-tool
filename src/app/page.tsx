@@ -14,21 +14,19 @@ import * as THREE from "three";
 
 useGLTF.preload("/Soda-can.gltf");
 
-// GitHub Pages 호환을 위해 쓰던 BASE를 클라이언트에서도 사용
-// Vercel/Pages 겸용 베이스 경로
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
-// 캔 사이즈 타입(위에서 먼저 선언)
 type CanSize = "355ml" | "475ml";
+type MaterialPreset = "matte" | "satin" | "glossy" | "chrome" | "custom";
+
 interface CanSizeSpec {
   scale: [number, number, number];
   labelSizeText: string;
 }
 
 interface LightingSettings {
-  // 전체 밝기(노출)
   exposure: number;
-  envIntensity: number; // (bar 미사용시) base HDRI 강도
+  envIntensity: number;
   ambientIntensity: number;
   fillLightIntensity: number;
   fillLightPosition: [number, number, number];
@@ -36,31 +34,29 @@ interface LightingSettings {
   rimLightPosition: [number, number, number];
   directionalIntensity: number;
   directionalPosition: [number, number, number];
-  otherRotation: number; // 나머지 조명 회전
-  otherStrength: number; // 나머지 조명 전체 배율
+  otherRotation: number;
+  otherStrength: number;
 }
 
-// 바(하이라이트) 설정 타입(명시적으로 추가)
 interface BarSettings {
   enabled: boolean;
   color: string;
-  intensity: number; // 0~20
-  width: number; // 0.1~12
-  height: number; // 0.1~16
-  distance: number; // 0.5~15
-  rotation: number; // 0~2π (바 전용 회전)
-  y: number; // -3~3
+  intensity: number;
+  width: number;
+  height: number;
+  distance: number;
+  rotation: number;
+  y: number;
 }
 
-// 금속 파트 설정 추가
 interface MetalPartSettings {
   color: string;
-  brightness: number; // 0.5 ~ 2.0
-  roughness: number; // 0 ~ 1 (낮을수록 글로시)
-  emissiveIntensity: number; // 0 ~ 2 (자체 발광으로 그림자 어두움 완화)
+  brightness: number;
+  roughness: number;
+  emissiveIntensity: number;
   castShadow: boolean;
   receiveShadow: boolean;
-  envMapIntensity: number; // 0 ~ 4 (환경/바 반사 강도)
+  envMapIntensity: number;
 }
 interface MetalSettings {
   top: MetalPartSettings;
@@ -68,19 +64,17 @@ interface MetalSettings {
 }
 
 const canSizeSpecs: Record<CanSize, CanSizeSpec> = {
-  // 355ml: 지름은 동일, 전체 스케일 기본값
   "355ml": {
     scale: [2.5, 2.5, 2.5],
-    // 지름 66mm → 둘레 ≈ 207mm, 라벨 높이 약 110mm
-    labelSizeText: "Label 414×220 mm",
+    labelSizeText: "414 × 220 mm",
   },
-  // 475ml: 동일 지름, 더 긴 높이 위주로 스케일
   "475ml": {
     scale: [2.6, 3.0, 2.6],
-    // 지름 동일 → 둘레 ≈ 207mm, 라벨 높이 약 140mm
-    labelSizeText: "Label 414×280 mm",
+    labelSizeText: "414 × 280 mm",
   },
 };
+
+// ─── 3D Components (unchanged) ────────────────────────────────────────────────
 
 function EditableSodaCan({
   customTexture,
@@ -103,11 +97,9 @@ function EditableSodaCan({
 }) {
   const { nodes } = useGLTF("/Soda-can.gltf");
 
-  // 사이즈별 기본 라벨(업로드/맛 선택이 없을 때)
   const defaultBySize =
     canSize === "475ml" ? `${BASE}/labels/475d.png` : `${BASE}/labels/355d.png`;
   const texture = useTexture(customTexture || defaultBySize);
-
   texture.flipY = false;
 
   const groupRef = useRef<THREE.Group>(null);
@@ -123,89 +115,59 @@ function EditableSodaCan({
     }
   });
 
-  // 원본 지오메트리
-  const metalGeo = (nodes.cylinder as THREE.Mesh)
-    .geometry as THREE.BufferGeometry;
-  const labelGeo = (nodes.cylinder_1 as THREE.Mesh)
-    .geometry as THREE.BufferGeometry;
+  const metalGeo = (nodes.cylinder as THREE.Mesh).geometry as THREE.BufferGeometry;
+  const labelGeo = (nodes.cylinder_1 as THREE.Mesh).geometry as THREE.BufferGeometry;
 
-  // 라벨 바디 경계 (로컬)
   if (!labelGeo.boundingBox) labelGeo.computeBoundingBox();
   const bodyMinY = labelGeo.boundingBox!.min.y;
   const bodyMaxY = labelGeo.boundingBox!.max.y;
   const bodyHeight = bodyMaxY - bodyMinY;
 
-  // 균일 그룹 스케일(지름만 조절)
-  const uniformScale = 2.0; // X=Y=Z (기본 표시 크기 80%)
-  // 475ml일 때 바디/라벨만 세로 확대
+  const uniformScale = 2.0;
   const sy = canSize === "475ml" ? 3.0 / 2.5 : 1.0;
 
-  // 상/하 경계 유격 제거 epsilon (로컬 단위, 475ml에서만 적용)
-  const seamTopLocal = sy > 1 ? bodyHeight * 0.003 : 0; // 위쪽은 소폭
-  const seamBottomLocal = sy > 1 ? bodyHeight * 0.007 : 0; // 아래쪽은 더 크게
-
-  // 중심 기준 신장량
+  const seamTopLocal = sy > 1 ? bodyHeight * 0.003 : 0;
+  const seamBottomLocal = sy > 1 ? bodyHeight * 0.007 : 0;
   const offsetCoreLocal = (bodyHeight / 2) * (sy - 1);
-
-  // 탑/바텀 이동량 (로컬 단위)
   const topOffsetLocal = offsetCoreLocal - seamTopLocal;
   const bottomOffsetLocal = offsetCoreLocal - seamBottomLocal;
 
-  // 클리핑 경계(월드 단위)
   const newMinWorld = bodyMinY * sy * uniformScale;
   const newMaxWorld = bodyMaxY * sy * uniformScale;
   const seamTopWorld = seamTopLocal * sy * uniformScale;
   const seamBottomWorld = seamBottomLocal * sy * uniformScale;
 
-  // 월드 기준 평면
   const planeKeepYGreaterEq = (y: number) =>
-    new THREE.Plane(new THREE.Vector3(0, 1, 0), -y); // y >= value
+    new THREE.Plane(new THREE.Vector3(0, 1, 0), -y);
   const planeKeepYLessEq = (y: number) =>
-    new THREE.Plane(new THREE.Vector3(0, -1, 0), y); // y <= value
+    new THREE.Plane(new THREE.Vector3(0, -1, 0), y);
 
-  // 상단/하단 보정: 바닥을 더 끌어올림
   const topPlane = planeKeepYGreaterEq(newMaxWorld - seamTopWorld);
   const bottomPlane = planeKeepYLessEq(newMinWorld + seamBottomWorld);
-  // 바디는 양쪽으로 확장
   const bodyPlanes = [
     planeKeepYGreaterEq(newMinWorld - seamBottomWorld),
     planeKeepYLessEq(newMaxWorld + seamTopWorld),
   ];
 
-  // 재질
   const colorWithBrightness = (hex: string, b: number) => {
     const c = new THREE.Color(hex);
     c.multiplyScalar(b);
     return c;
   };
-  const makeMetalMat = (
-    planes: THREE.Plane[],
-    part: "top" | "bottom" | "body"
-  ) => {
+  const makeMetalMat = (planes: THREE.Plane[], part: "top" | "bottom" | "body") => {
     const cfg =
       part === "top"
         ? metalSettings.top
         : part === "bottom"
         ? metalSettings.bottom
         : {
-            // 바디 금속은 상/하 평균값 적용
             color: "#bbbbbb",
-            brightness:
-              (metalSettings.top.brightness + metalSettings.bottom.brightness) /
-              2,
-            roughness:
-              (metalSettings.top.roughness + metalSettings.bottom.roughness) /
-              2,
-            emissiveIntensity:
-              (metalSettings.top.emissiveIntensity +
-                metalSettings.bottom.emissiveIntensity) /
-              2,
+            brightness: (metalSettings.top.brightness + metalSettings.bottom.brightness) / 2,
+            roughness: (metalSettings.top.roughness + metalSettings.bottom.roughness) / 2,
+            emissiveIntensity: (metalSettings.top.emissiveIntensity + metalSettings.bottom.emissiveIntensity) / 2,
             castShadow: false,
             receiveShadow: true,
-            envMapIntensity:
-              (metalSettings.top.envMapIntensity +
-                metalSettings.bottom.envMapIntensity) /
-              2,
+            envMapIntensity: (metalSettings.top.envMapIntensity + metalSettings.bottom.envMapIntensity) / 2,
           };
     return new THREE.MeshStandardMaterial({
       roughness: cfg.roughness,
@@ -224,124 +186,50 @@ function EditableSodaCan({
   const bottomMetalMat = makeMetalMat([bottomPlane], "bottom");
 
   return (
-    <group
-      ref={groupRef}
-      dispose={null}
-      scale={[uniformScale, uniformScale, uniformScale]}
-    >
-      {/* 상단 금속 */}
-      <mesh
-        castShadow={metalSettings.top.castShadow}
-        receiveShadow={metalSettings.top.receiveShadow}
-        geometry={metalGeo}
-        material={topMetalMat}
-        position-y={topOffsetLocal}
-      />
-      {/* 중앙 금속(바디) */}
-      <mesh
-        castShadow
-        receiveShadow
-        geometry={metalGeo}
-        material={bodyMetalMat}
-        scale={[1, sy, 1]}
-      />
-      {/* 하단 금속 */}
-      <mesh
-        castShadow={metalSettings.bottom.castShadow}
-        receiveShadow={metalSettings.bottom.receiveShadow}
-        geometry={metalGeo}
-        material={bottomMetalMat}
-        position-y={-bottomOffsetLocal}
-      />
-
-      {/* 라벨: z-fighting 방지 offset 강화 */}
+    <group ref={groupRef} dispose={null} scale={[uniformScale, uniformScale, uniformScale]}>
+      <mesh castShadow={metalSettings.top.castShadow} receiveShadow={metalSettings.top.receiveShadow} geometry={metalGeo} material={topMetalMat} position-y={topOffsetLocal} />
+      <mesh castShadow receiveShadow geometry={metalGeo} material={bodyMetalMat} scale={[1, sy, 1]} />
+      <mesh castShadow={metalSettings.bottom.castShadow} receiveShadow={metalSettings.bottom.receiveShadow} geometry={metalGeo} material={bottomMetalMat} position-y={-bottomOffsetLocal} />
       <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
-        <meshStandardMaterial
-          roughness={labelRoughness}
-          metalness={0.7}
-          map={texture}
-          transparent
-          polygonOffset
-          polygonOffsetFactor={-2}
-          polygonOffsetUnits={-2}
-        />
+        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} transparent polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
-
-      {/* 탭 */}
-      <mesh
-        castShadow
-        receiveShadow
-        geometry={(nodes.Tab as THREE.Mesh).geometry}
-        position-y={topOffsetLocal}
-      >
-        <meshStandardMaterial
-          roughness={metalSettings.top.roughness}
-          metalness={1}
-          color={colorWithBrightness(
-            metalSettings.top.color,
-            metalSettings.top.brightness
-          )}
-          emissive={"#ffffff"}
-          emissiveIntensity={metalSettings.top.emissiveIntensity}
-          envMapIntensity={metalSettings.top.envMapIntensity}
-        />
+      <mesh castShadow receiveShadow geometry={(nodes.Tab as THREE.Mesh).geometry} position-y={topOffsetLocal}>
+        <meshStandardMaterial roughness={metalSettings.top.roughness} metalness={1} color={colorWithBrightness(metalSettings.top.color, metalSettings.top.brightness)} emissive={"#ffffff"} emissiveIntensity={metalSettings.top.emissiveIntensity} envMapIntensity={metalSettings.top.envMapIntensity} />
       </mesh>
     </group>
   );
 }
 
 function CustomLighting({ settings }: { settings: LightingSettings }) {
-  // otherStrength로 전체 배율을 곱함
   const k = settings.otherStrength;
   return (
     <group rotation-y={settings.otherRotation}>
       <ambientLight intensity={settings.ambientIntensity * k} />
-      <directionalLight
-        position={settings.directionalPosition}
-        intensity={settings.directionalIntensity * k}
-        castShadow
-        shadow-mapSize-width={2048}
-        shadow-mapSize-height={2048}
-        shadow-bias={-0.0005}
-        shadow-normalBias={0.02}
-        shadow-radius={4}
-      />
-      <pointLight
-        position={settings.fillLightPosition}
-        intensity={settings.fillLightIntensity * k}
-        color="#ffffff"
-      />
-      <pointLight
-        position={settings.rimLightPosition}
-        intensity={settings.rimLightIntensity * k}
-        color="#ffffff"
-      />
+      <directionalLight position={settings.directionalPosition} intensity={settings.directionalIntensity * k} castShadow shadow-mapSize-width={2048} shadow-mapSize-height={2048} shadow-bias={-0.0005} shadow-normalBias={0.02} shadow-radius={4} />
+      <pointLight position={settings.fillLightPosition} intensity={settings.fillLightIntensity * k} color="#ffffff" />
+      <pointLight position={settings.rimLightPosition} intensity={settings.rimLightIntensity * k} color="#ffffff" />
     </group>
   );
 }
 
-// 렌더러 노출(전체 밝기) 제어
 function SceneExposure({ exposure }: { exposure: number }) {
   const { gl } = useThree();
   useFrame(() => {
     gl.toneMapping = THREE.ACESFilmicToneMapping;
-    gl.toneMappingExposure = exposure; // 0.0~4.0
+    gl.toneMappingExposure = exposure;
     gl.shadowMap.enabled = true;
-    gl.shadowMap.type = THREE.PCFSoftShadowMap; // 더 부드러운 그림자
+    gl.shadowMap.type = THREE.PCFSoftShadowMap;
   });
   return null;
 }
 
-// 카메라 원근 제어: FOV 변경 시 프레이밍 유지(기준 fov=25, z=4)
 function CameraPerspective({ fov }: { fov: number }) {
   const { camera } = useThree();
   useEffect(() => {
     const persp = camera as THREE.PerspectiveCamera;
-    const baseFov = 25; // Canvas 기본 fov
-    const baseZ = 4; // Canvas 기본 z
-    const z =
-      (baseZ * Math.tan(THREE.MathUtils.degToRad(baseFov / 2))) /
-      Math.tan(THREE.MathUtils.degToRad(fov / 2));
+    const baseFov = 25;
+    const baseZ = 4;
+    const z = (baseZ * Math.tan(THREE.MathUtils.degToRad(baseFov / 2))) / Math.tan(THREE.MathUtils.degToRad(fov / 2));
     persp.fov = fov;
     persp.position.set(0, 0, z);
     persp.updateProjectionMatrix();
@@ -349,28 +237,12 @@ function CameraPerspective({ fov }: { fov: number }) {
   return null;
 }
 
-// 바 하이라이트 전용 Environment + (bar 미사용시) 기본 HDRI
-function RotatingEnvironment({
-  barRotation,
-  otherRotation,
-  intensity = 1,
-  bar,
-}: {
-  barRotation: number;
-  otherRotation: number;
-  intensity?: number;
-  bar: BarSettings;
-}) {
+function RotatingEnvironment({ barRotation, otherRotation, bar }: { barRotation: number; otherRotation: number; intensity?: number; bar: BarSettings }) {
   if (bar.enabled) {
     return (
       <Environment resolution={1024}>
         <group rotation-y={barRotation}>
-          <Lightformer
-            color={bar.color}
-            intensity={bar.intensity}
-            position={[0, bar.y, bar.distance]}
-            scale={[bar.width, bar.height, 1]}
-          />
+          <Lightformer color={bar.color} intensity={bar.intensity} position={[0, bar.y, bar.distance]} scale={[bar.width, bar.height, 1]} />
         </group>
       </Environment>
     );
@@ -382,11 +254,7 @@ function RotatingEnvironment({
   );
 }
 
-function CustomOrbitControls({
-  controlsRef,
-}: {
-  controlsRef: React.RefObject<any>;
-}) {
+function CustomOrbitControls({ controlsRef }: { controlsRef: React.RefObject<any> }) {
   const [isInteracting, setIsInteracting] = useState(false);
   useFrame(() => {
     if (!isInteracting && controlsRef.current) {
@@ -400,96 +268,98 @@ function CustomOrbitControls({
     }
   });
   return (
-    <OrbitControls
-      ref={controlsRef}
-      enablePan={false}
-      enableZoom
-      enableRotate
-      minDistance={2}
-      maxDistance={12}
-      minPolarAngle={Math.PI / 6}
-      maxPolarAngle={(Math.PI * 5) / 6}
-      onStart={() => setIsInteracting(true)}
-      onEnd={() => setIsInteracting(false)}
-      enableDamping
-      dampingFactor={0.05}
-    />
+    <OrbitControls ref={controlsRef} enablePan={false} enableZoom enableRotate minDistance={2} maxDistance={12} minPolarAngle={Math.PI / 6} maxPolarAngle={(Math.PI * 5) / 6} onStart={() => setIsInteracting(true)} onEnd={() => setIsInteracting(false)} enableDamping dampingFactor={0.05} />
   );
 }
 
-// 타입 선언 (누락 보완)
-// type CanSize = "355ml" | "475ml";
+// ─── UI Helper ────────────────────────────────────────────────────────────────
 
-// interface CanSizeSpec {
-//   scale: [number, number, number];
-//   labelSizeText: string;
-// }
+function SliderRow({ label, value, min, max, step, onChange, display }: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  onChange: (v: number) => void;
+  display: (v: number) => string;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex justify-between items-center">
+        <span className="font-mono text-[11px] text-white/45">{label}</span>
+        <span className="font-mono text-[11px] text-white/30 tabular-nums">{display(value)}</span>
+      </div>
+      <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="w-full" />
+    </div>
+  );
+}
+
+// ─── Main Page ─────────────────────────────────────────────────────────────────
+
+const DEFAULT_METAL: MetalSettings = {
+  top: { color: "#c7c7c7", brightness: 1.35, roughness: 0.48, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.4 },
+  bottom: { color: "#b8b8b8", brightness: 1.4, roughness: 0.46, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.5 },
+};
+const DEFAULT_LIGHTING: LightingSettings = {
+  exposure: 1.43, envIntensity: 2.32, ambientIntensity: 2.7,
+  fillLightIntensity: 4.3, fillLightPosition: [5, 0, 5],
+  rimLightIntensity: 5.6, rimLightPosition: [-5, 0, 5],
+  directionalIntensity: 4.2, directionalPosition: [1000, 500, 500],
+  otherRotation: (130 * Math.PI) / 180, otherStrength: 1.61,
+};
+const DEFAULT_BAR: BarSettings = {
+  enabled: true, color: "#fafafa", intensity: 1.1,
+  width: 10.1, height: 11.1, distance: 3.6,
+  rotation: Math.PI * 2, y: -1.91,
+};
 
 export default function Page() {
-  const [selectedFlavor, setSelectedFlavor] = useState<
-    "none" | keyof typeof flavorTextures
-  >("none");
+  const [selectedFlavor, setSelectedFlavor] = useState<"none" | keyof typeof flavorTextures>("none");
   const [rotation, setRotation] = useState<[number, number, number]>([0, 0, 0]);
   const [customImage, setCustomImage] = useState<string>("");
-  const [isAutoRotating, setIsAutoRotating] = useState(false);
+  const [isAutoRotating, setIsAutoRotating] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState(0);
   const [canSize, setCanSize] = useState<CanSize>("355ml");
   const [labelRoughness, setLabelRoughness] = useState<number>(0.21);
-  const [metalSettings, setMetalSettings] = useState<MetalSettings>({
-    top: {
-      color: "#c7c7c7",
-      brightness: 1.35,
-      roughness: 0.48,
-      emissiveIntensity: 0.01,
-      castShadow: false,
-      receiveShadow: true,
-      envMapIntensity: 1.4,
-    },
-    bottom: {
-      color: "#b8b8b8",
-      brightness: 1.4,
-      roughness: 0.46,
-      emissiveIntensity: 0.01,
-      castShadow: false,
-      receiveShadow: true,
-      envMapIntensity: 1.5,
-    },
-  });
-  const [lightingSettings, setLightingSettings] = useState<LightingSettings>({
-    exposure: 1.43,
-    envIntensity: 2.32, // (bar 비활성 시) HDRI 강도
-    ambientIntensity: 2.7,
-    fillLightIntensity: 4.3,
-    fillLightPosition: [5, 0, 5],
-    rimLightIntensity: 5.6,
-    rimLightPosition: [-5, 0, 5],
-    directionalIntensity: 4.2,
-    directionalPosition: [1000, 500, 500],
-    otherRotation: (130 * Math.PI) / 180, // 130°
-    otherStrength: 1.61,
-  });
-  const [bar, setBar] = useState<BarSettings>({
-    enabled: true,
-    color: "#fafafa",
-    intensity: 1.1,
-    width: 10.1,
-    height: 11.1,
-    distance: 3.6,
-    rotation: Math.PI * 2, // 360°
-    y: -1.91,
-  });
+  const [metalSettings, setMetalSettings] = useState<MetalSettings>(DEFAULT_METAL);
+  const [lightingSettings, setLightingSettings] = useState<LightingSettings>(DEFAULT_LIGHTING);
+  const [bar, setBar] = useState<BarSettings>(DEFAULT_BAR);
   const [cameraFov, setCameraFov] = useState<number>(10);
+
+  // New state
+  const [materialPreset, setMaterialPreset] = useState<MaterialPreset>("satin");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [lightingAdvancedOpen, setLightingAdvancedOpen] = useState(false);
+  const [openSections, setOpenSections] = useState({ can: true, image: true, material: true, lighting: true, controls: true });
+
+  const [isPreparingRecord, setIsPreparingRecord] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<any>(null);
+  const recordingAbortRef = useRef(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
-  const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+  // ── Handlers ──────────────────────────────────────────────────────────────
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = (e) => setCustomImage(e.target?.result as string);
+    reader.onload = (ev) => setCustomImage(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
+  const handleDragLeave = () => setIsDragOver(false);
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => setCustomImage(ev.target?.result as string);
     reader.readAsDataURL(file);
   };
 
@@ -497,77 +367,51 @@ export default function Page() {
     setLightingSettings((prev) => ({ ...prev, [key]: value }));
   };
 
-  const updateMetalSetting = (
-    part: "top" | "bottom",
-    key: keyof MetalPartSettings,
-    value: string | number | boolean
-  ) => {
-    setMetalSettings((prev) => ({
-      ...prev,
-      [part]: {
-        ...prev[part],
-        [key]: value as any,
-      },
-    }));
+  const updateMetalSetting = (part: "top" | "bottom", key: keyof MetalPartSettings, value: string | number | boolean) => {
+    setMetalSettings((prev) => ({ ...prev, [part]: { ...prev[part], [key]: value as any } }));
   };
+
+  const metalPresetValues: Record<Exclude<MaterialPreset, "custom">, Partial<MetalPartSettings>> = {
+    matte:  { roughness: 0.85, brightness: 1.1,  emissiveIntensity: 0.0,  envMapIntensity: 0.8 },
+    satin:  { roughness: 0.48, brightness: 1.35, emissiveIntensity: 0.01, envMapIntensity: 1.4 },
+    glossy: { roughness: 0.15, brightness: 1.6,  emissiveIntensity: 0.02, envMapIntensity: 2.2 },
+    chrome: { roughness: 0.04, brightness: 1.9,  emissiveIntensity: 0.05, envMapIntensity: 3.0 },
+  };
+  const labelRoughnessPresets: Record<Exclude<MaterialPreset, "custom">, number> = {
+    matte: 0.85, satin: 0.21, glossy: 0.05, chrome: 0.02,
+  };
+
+  const applyMetalPreset = (preset: MaterialPreset) => {
+    setMaterialPreset(preset);
+    if (preset === "custom") return;
+    const p = metalPresetValues[preset];
+    setMetalSettings(prev => ({ top: { ...prev.top, ...p }, bottom: { ...prev.bottom, ...p } }));
+    setLabelRoughness(labelRoughnessPresets[preset]);
+  };
+
+  const toggleSection = (key: keyof typeof openSections) =>
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
 
   const resetToDefault = () => {
     setCustomImage("");
     setRotation([0, 0, 0]);
-    setIsAutoRotating(false);
+    setIsAutoRotating(true);
     setIsRecording(false);
     setRecordingProgress(0);
     setLabelRoughness(0.21);
     setCanSize("355ml");
-    setMetalSettings({
-      top: {
-        color: "#c7c7c7",
-        brightness: 1.35,
-        roughness: 0.48,
-        emissiveIntensity: 0.01,
-        castShadow: false,
-        receiveShadow: true,
-        envMapIntensity: 1.4,
-      },
-      bottom: {
-        color: "#b8b8b8",
-        brightness: 1.4,
-        roughness: 0.46,
-        emissiveIntensity: 0.01,
-        castShadow: false,
-        receiveShadow: true,
-        envMapIntensity: 1.5,
-      },
-    });
-    setLightingSettings((prev) => ({
-      ...prev,
-      exposure: 1.43,
-      envIntensity: 2.32,
-      ambientIntensity: 2.7,
-      fillLightIntensity: 4.3,
-      rimLightIntensity: 5.6,
-      directionalIntensity: 4.2,
-      otherRotation: (130 * Math.PI) / 180,
-      otherStrength: 1.61,
-    }));
-    setBar({
-      enabled: true,
-      color: "#fafafa",
-      intensity: 1.1,
-      width: 10.1,
-      height: 11.1,
-      distance: 3.6,
-      rotation: Math.PI * 2,
-      y: -1.91,
-    });
+    setMetalSettings(DEFAULT_METAL);
+    setLightingSettings(DEFAULT_LIGHTING);
+    setBar(DEFAULT_BAR);
     controlsRef.current?.reset();
     setCameraFov(10);
     setSelectedFlavor("none");
+    setMaterialPreset("satin");
   };
 
   const toggleAutoRotation = () => setIsAutoRotating((v) => !v);
 
-  // --- Preset JSON (Save / Load) ---
+  // ── Preset JSON ────────────────────────────────────────────────────────────
   type AppSettings = {
     version: 1;
     canSize: CanSize;
@@ -580,61 +424,26 @@ export default function Page() {
     isAutoRotating: boolean;
   };
 
-  const buildSettings = (): AppSettings => ({
-    version: 1 as const,
-    canSize,
-    labelRoughness,
-    cameraFov,
-    metalSettings,
-    lightingSettings,
-    bar,
-    rotation,
-    isAutoRotating,
-  });
+  const buildSettings = (): AppSettings => ({ version: 1 as const, canSize, labelRoughness, cameraFov, metalSettings, lightingSettings, bar, rotation, isAutoRotating });
 
   const saveSettingsToJson = () => {
-    const data = buildSettings();
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: "application/json",
-    });
+    const blob = new Blob([JSON.stringify(buildSettings(), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `can-editor-preset.json`;
-    a.click();
+    a.href = url; a.download = `can-editor-preset.json`; a.click();
     URL.revokeObjectURL(url);
   };
 
   const applySettings = (s: Partial<AppSettings>) => {
     if (s.canSize) setCanSize(s.canSize);
-    if (typeof s.labelRoughness === "number")
-      setLabelRoughness(s.labelRoughness);
+    if (typeof s.labelRoughness === "number") setLabelRoughness(s.labelRoughness);
     if (typeof s.cameraFov === "number") setCameraFov(s.cameraFov);
-    if (s.rotation && Array.isArray(s.rotation) && s.rotation.length === 3) {
-      setRotation([
-        Number(s.rotation[0]),
-        Number(s.rotation[1]),
-        Number(s.rotation[2]),
-      ] as [number, number, number]);
-    }
-    if (typeof s.isAutoRotating === "boolean")
-      setIsAutoRotating(s.isAutoRotating);
-    if (s.metalSettings) {
-      setMetalSettings((prev) => ({
-        top: { ...prev.top, ...(s.metalSettings as MetalSettings).top },
-        bottom: {
-          ...prev.bottom,
-          ...(s.metalSettings as MetalSettings).bottom,
-        },
-      }));
-    }
-    if (s.lightingSettings) {
-      setLightingSettings((prev) => ({
-        ...prev,
-        ...(s.lightingSettings as LightingSettings),
-      }));
-    }
-    if (s.bar) setBar((prev) => ({ ...prev, ...(s.bar as BarSettings) }));
+    if (s.rotation && Array.isArray(s.rotation) && s.rotation.length === 3)
+      setRotation([Number(s.rotation[0]), Number(s.rotation[1]), Number(s.rotation[2])] as [number, number, number]);
+    if (typeof s.isAutoRotating === "boolean") setIsAutoRotating(s.isAutoRotating);
+    if (s.metalSettings) setMetalSettings(prev => ({ top: { ...prev.top, ...(s.metalSettings as MetalSettings).top }, bottom: { ...prev.bottom, ...(s.metalSettings as MetalSettings).bottom } }));
+    if (s.lightingSettings) setLightingSettings(prev => ({ ...prev, ...(s.lightingSettings as LightingSettings) }));
+    if (s.bar) setBar(prev => ({ ...prev, ...(s.bar as BarSettings) }));
   };
 
   const onLoadPresetClick = () => presetInputRef.current?.click();
@@ -644,1047 +453,450 @@ export default function Page() {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const text = String(reader.result || "{}");
-        const json = JSON.parse(text);
+        const json = JSON.parse(String(reader.result || "{}"));
         if (json && (json.version === 1 || json.version === undefined)) {
           applySettings(json);
-          alert("Preset loaded.");
-        } else {
-          alert("Unsupported preset version.");
         }
-      } catch (err) {
-        console.error(err);
-        alert("Failed to load preset: invalid JSON.");
-      } finally {
-        e.target.value = ""; // allow loading same file again
-      }
+      } catch (err) { console.error(err); }
+      finally { e.target.value = ""; }
     };
     reader.readAsText(file);
   };
 
-  // PNG 저장: 현재 캔버스 해상도 그대로, 배경 투명
   const saveToPNG = () => {
     const src = document.querySelector("canvas") as HTMLCanvasElement | null;
     if (!src) return;
-
-    const link = document.createElement("a");
-    link.download = `can-${canSize}.png`;
-    link.href = src.toDataURL("image/png");
-    link.click();
+    const a = document.createElement("a");
+    a.download = `can-${canSize}.png`;
+    a.href = src.toDataURL("image/png");
+    a.click();
   };
 
-  // 360 비디오 녹화: 현재 캔버스 해상도 그대로, 배경 투명, 속도 1/2(6초)
+  const cancelRecording = useCallback(() => {
+    recordingAbortRef.current = true;
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    mediaRecorderRef.current = null;
+    setIsRecording(false);
+    setIsPreparingRecord(false);
+    setRecordingProgress(0);
+  }, []);
+
   const startVideoRecording = useCallback(() => {
     const src = document.querySelector("canvas") as HTMLCanvasElement | null;
     if (!src) return;
 
-    setIsRecording(true);
-    setRecordingProgress(0);
+    // Step 1: snap to front, stop auto-rotation
+    setIsAutoRotating(false);
+    setRotation([0, 0, 0]);
+    setIsPreparingRecord(true);
+    recordingAbortRef.current = false;
 
-    const stream = src.captureStream(30);
-    const recorder = new MediaRecorder(stream, {
-      mimeType: "video/webm;codecs=vp9",
-    });
+    // Step 2: short delay so the snap renders, then start recording
+    setTimeout(() => {
+      if (recordingAbortRef.current) {
+        setIsPreparingRecord(false);
+        return;
+      }
 
-    const chunks: BlobPart[] = [];
-    recorder.ondataavailable = (ev) => {
-      if (ev.data.size > 0) chunks.push(ev.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "video/webm" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `can-rotation-${canSize}.webm`;
-      a.click();
-      URL.revokeObjectURL(url);
-    };
+      setIsPreparingRecord(false);
+      setIsRecording(true);
+      setRecordingProgress(0);
 
-    recorder.start();
+      const stream = src.captureStream(30);
+      const recorder = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
+      mediaRecorderRef.current = recorder;
+      const chunks: BlobPart[] = [];
 
-    const duration = 6000; // 6초: 기존 대비 1/2 속도
-    const start = performance.now();
-
-    const tick = () => {
-      const elapsed = performance.now() - start;
-      const progress = Math.min(elapsed / duration, 1);
-      setRecordingProgress(progress * 100);
-
-      if (progress < 1) {
-        requestAnimationFrame(tick);
-      } else {
-        recorder.stop();
+      recorder.ondataavailable = (ev) => { if (ev.data.size > 0) chunks.push(ev.data); };
+      recorder.onstop = () => {
+        if (recordingAbortRef.current) return; // cancelled — skip download
+        const blob = new Blob(chunks, { type: "video/webm" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = `can-rotation-${canSize}.webm`; a.click();
+        URL.revokeObjectURL(url);
         setIsRecording(false);
         setRecordingProgress(0);
-      }
-    };
+        mediaRecorderRef.current = null;
+      };
 
-    requestAnimationFrame(tick);
+      recorder.start();
+      const duration = 6000;
+      const start = performance.now();
+      const tick = () => {
+        if (recordingAbortRef.current) return;
+        const elapsed = performance.now() - start;
+        const progress = Math.min(elapsed / duration, 1);
+        setRecordingProgress(progress * 100);
+        if (progress < 1) { requestAnimationFrame(tick); }
+        else { recorder.stop(); }
+      };
+      requestAnimationFrame(tick);
+    }, 350);
   }, [canSize]);
 
-  return (
-    <div className="min-h-screen bg-white">
-      <div className="flex h-screen">
-        <div className="w-80 bg-gray-50 p-6 shadow-lg overflow-y-auto border-r">
-          <div className="space-y-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800 mb-2">
-                Can Editor
-              </h1>
-              <p className="text-gray-600 text-sm">
-                Customize and rotate your soda can
-              </p>
-            </div>
+  // ── Shared style tokens ────────────────────────────────────────────────────
+  const pillBase = "px-3 py-1.5 rounded-full font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 cursor-pointer";
+  const pillInactive = "border-white/[0.15] text-white/45 hover:border-white/30 hover:text-white/70";
+  const pillActive = "border-blue-400/70 bg-blue-400/[0.18] text-white";
+  const inputBase = "bg-white/[0.05] border border-white/[0.1] rounded text-white/70 font-mono text-[11px] px-2 py-1 outline-none focus:border-white/25 transition-colors w-full";
+  const sectionBtn = "w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-white/[0.025]";
+  const sectionTitle = "font-mono text-[10px] uppercase tracking-[0.18em] text-white/40";
+  const divider = <div className="mx-4 border-t border-white/[0.07]" />;
 
-            {/* Can Size 선택 (상단 버튼) */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Can Size
-              </h3>
-              <div className="grid grid-cols-2 gap-2">
-                {(Object.keys(canSizeSpecs) as CanSize[]).map((size) => (
+  // ── Canvas texture ─────────────────────────────────────────────────────────
+  const selectedTexture = selectedFlavor === "none" ? undefined : flavorTextures[selectedFlavor];
+  const defaultBySize = canSize === "475ml" ? `${BASE}/labels/475d.png` : `${BASE}/labels/355d.png`;
+  const appliedTexture = customImage || selectedTexture || defaultBySize;
+
+  return (
+    <div className="h-screen bg-black flex overflow-hidden">
+      {/* ── 3D Canvas ── */}
+      <div className="flex-1 relative bg-black">
+        <Canvas
+          camera={{ position: [0, 0, 4], fov: 25 }}
+          shadows
+          style={{ background: "transparent" }}
+          gl={{ preserveDrawingBuffer: true, alpha: true, localClippingEnabled: true }}
+        >
+          <SceneExposure exposure={lightingSettings.exposure} />
+          <CameraPerspective fov={cameraFov} />
+          <CustomLighting settings={lightingSettings} />
+          <EditableSodaCan
+            customTexture={appliedTexture}
+            rotation={rotation}
+            isAutoRotating={isAutoRotating}
+            isRecording={isRecording}
+            recordingProgress={recordingProgress}
+            canSize={canSize}
+            labelRoughness={labelRoughness}
+            metalSettings={metalSettings}
+          />
+          <CustomOrbitControls controlsRef={controlsRef} />
+          <RotatingEnvironment barRotation={bar.rotation} otherRotation={lightingSettings.otherRotation} intensity={lightingSettings.envIntensity} bar={bar} />
+        </Canvas>
+      </div>
+
+      {/* ── Right Sidebar ── */}
+      <div
+        className="flex-shrink-0 h-screen overflow-y-auto flex flex-col"
+        style={{ width: "272px", background: "rgba(7,7,7,0.97)", borderLeft: "1px solid rgba(255,255,255,0.07)" }}
+      >
+        {/* Header */}
+        <div className="px-4 pt-5 pb-4">
+          <div className="font-mono text-[12px] text-white uppercase tracking-[0.22em]">Spirit Can Editor</div>
+          <div className="font-mono text-[10px] text-white/25 tracking-[0.12em] mt-1">2.0</div>
+        </div>
+
+        {divider}
+
+        {/* ── CAN ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => toggleSection("can")}>
+            <span className={sectionTitle}>Can</span>
+            <span className="text-white/20 text-[10px]">{openSections.can ? "▾" : "▸"}</span>
+          </button>
+          {openSections.can && (
+            <div className="px-4 pb-4">
+              <div className="flex gap-1.5">
+                {(["355ml", "475ml"] as CanSize[]).map((size) => (
                   <button
                     key={size}
                     onClick={() => setCanSize(size)}
-                    className={`p-3 rounded-lg border-2 text-left transition-colors ${
-                      canSize === size
-                        ? "border-blue-500 bg-blue-50"
-                        : "border-gray-200 hover:border-gray-300"
-                    }`}
+                    className={`flex-1 py-2.5 px-2 rounded-lg border transition-all duration-150 text-left font-mono ${canSize === size ? pillActive : pillInactive}`}
+                    style={{ borderRadius: "8px" }}
                   >
-                    <div className="font-semibold text-gray-800">{size}</div>
-                    <div className="text-xs text-gray-500 mt-1">
-                      {canSizeSpecs[size].labelSizeText}
-                    </div>
+                    <div className="text-[11px] uppercase tracking-wider">{size}</div>
+                    <div className="text-[9px] opacity-40 mt-0.5 normal-case tracking-normal font-normal">{canSizeSpecs[size].labelSizeText}</div>
                   </button>
                 ))}
               </div>
             </div>
+          )}
+        </div>
 
-            {/* 라벨 질감 조절 */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Label Texture
-              </h3>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                Roughness: {labelRoughness.toFixed(2)} (
-                {labelRoughness > 0.5 ? "Matte" : "Glossy"})
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.01}
-                value={labelRoughness}
-                onChange={(e) => setLabelRoughness(parseFloat(e.target.value))}
-                className="w-full"
-              />
+        {divider}
+
+        {/* ── IMAGE ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => toggleSection("image")}>
+            <span className={sectionTitle}>Image</span>
+            <span className="text-white/20 text-[10px]">{openSections.image ? "▾" : "▸"}</span>
+          </button>
+          {openSections.image && (
+            <div className="px-4 pb-4 space-y-2">
+              <div
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center gap-1.5 py-7 rounded-lg border cursor-pointer transition-all duration-150 ${
+                  isDragOver
+                    ? "border-blue-400/60 bg-blue-400/[0.07]"
+                    : customImage
+                    ? "border-green-400/40 bg-green-400/[0.05]"
+                    : "border-white/[0.12] hover:border-white/25 bg-white/[0.02] hover:bg-white/[0.035]"
+                }`}
+              >
+                <div className={`font-mono text-[11px] uppercase tracking-wider ${customImage ? "text-green-400/70" : "text-white/35"}`}>
+                  {isDragOver ? "Drop image" : customImage ? "✓  Image loaded" : "Drop or click to upload"}
+                </div>
+                <div className="font-mono text-[9px] text-white/20 uppercase">PNG · JPG</div>
+              </div>
+              {/* Optimal size info */}
+              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+                <span className="font-mono text-[9px] text-white/25 uppercase tracking-wider">Optimal size</span>
+                <span className="font-mono text-[10px] text-white/45">{canSizeSpecs[canSize].labelSizeText}</span>
+              </div>
+              {customImage && (
+                <button
+                  onClick={() => setCustomImage("")}
+                  className="w-full py-1.5 font-mono text-[10px] text-white/25 uppercase tracking-wider border border-white/[0.07] rounded-lg hover:text-white/45 hover:border-white/18 transition-all"
+                >
+                  Remove Image
+                </button>
+              )}
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
             </div>
+          )}
+        </div>
 
-            {/* 금속(윗/아랫면) 설정 */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Metal (Top & Bottom)
-              </h3>
-              {/* Top */}
-              <div className="bg-gray-50 p-3 rounded-lg mb-3">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">
-                  Top Metal
-                </h4>
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={metalSettings.top.color}
-                      onChange={(e) =>
-                        updateMetalSetting("top", "color", e.target.value)
-                      }
-                      className="w-10 h-7 rounded border"
-                    />
-                    <input
-                      type="text"
-                      value={metalSettings.top.color}
-                      onChange={(e) =>
-                        updateMetalSetting("top", "color", e.target.value)
-                      }
-                      className="flex-1 p-1 text-xs border rounded"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Roughness: {metalSettings.top.roughness.toFixed(2)} (
-                      {metalSettings.top.roughness > 0.5 ? "Matte" : "Glossy"})
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metalSettings.top.roughness}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "top",
-                          "roughness",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Brightness: {metalSettings.top.brightness.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={2}
-                      step={0.05}
-                      value={metalSettings.top.brightness}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "top",
-                          "brightness",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Emissive Boost:{" "}
-                      {metalSettings.top.emissiveIntensity.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={2}
-                      step={0.01}
-                      value={metalSettings.top.emissiveIntensity}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "top",
-                          "emissiveIntensity",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <label className="text-sm flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={metalSettings.top.castShadow}
-                        onChange={(e) =>
-                          updateMetalSetting(
-                            "top",
-                            "castShadow",
-                            e.target.checked
-                          )
-                        }
-                      />
-                      Cast Shadow
-                    </label>
-                    <label className="text-sm flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={metalSettings.top.receiveShadow}
-                        onChange={(e) =>
-                          updateMetalSetting(
-                            "top",
-                            "receiveShadow",
-                            e.target.checked
-                          )
-                        }
-                      />
-                      Receive Shadow
-                    </label>
-                  </div>
+        {divider}
+
+        {/* ── MATERIAL ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => toggleSection("material")}>
+            <span className={sectionTitle}>Material</span>
+            <span className="text-white/20 text-[10px]">{openSections.material ? "▾" : "▸"}</span>
+          </button>
+          {openSections.material && (
+            <div className="px-4 pb-4 space-y-4">
+              {/* Metal finish presets */}
+              <div>
+                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Metal Finish</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {(["matte", "satin", "glossy", "chrome", "custom"] as MaterialPreset[]).map((p) => (
+                    <button key={p} onClick={() => applyMetalPreset(p)} className={`${pillBase} ${materialPreset === p ? pillActive : pillInactive}`}>
+                      {p}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Bottom */}
-              <div className="bg-gray-50 p-3 rounded-lg">
-                <h4 className="text-sm font-semibold text-gray-800 mb-2">
-                  Bottom Metal
-                </h4>
+              {/* Non-custom: show label finish info */}
+              {materialPreset !== "custom" && (
+                <div className="flex justify-between items-center py-1.5 px-3 rounded-lg bg-white/[0.03] border border-white/[0.07]">
+                  <span className="font-mono text-[10px] text-white/35 uppercase tracking-wider">Label</span>
+                  <span className="font-mono text-[10px] text-white/45">
+                    {labelRoughness <= 0.1 ? "Glossy" : labelRoughness <= 0.4 ? "Satin" : "Matte"}
+                    <span className="text-white/20 ml-1.5">{labelRoughness.toFixed(2)}</span>
+                  </span>
+                </div>
+              )}
+
+              {/* Custom: show all sliders */}
+              {materialPreset === "custom" && (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      value={metalSettings.bottom.color}
-                      onChange={(e) =>
-                        updateMetalSetting("bottom", "color", e.target.value)
-                      }
-                      className="w-10 h-7 rounded border"
-                    />
-                    <input
-                      type="text"
-                      value={metalSettings.bottom.color}
-                      onChange={(e) =>
-                        updateMetalSetting("bottom", "color", e.target.value)
-                      }
-                      className="flex-1 p-1 text-xs border rounded"
-                    />
+                  <SliderRow label="Label Roughness" value={labelRoughness} min={0} max={1} step={0.01} onChange={(v) => setLabelRoughness(v)} display={(v) => v.toFixed(2)} />
+
+                  <div className="pt-1">
+                    <div className="mb-2 font-mono text-[9px] text-white/25 uppercase tracking-wider">Top Metal</div>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <input type="color" value={metalSettings.top.color} onChange={(e) => updateMetalSetting("top", "color", e.target.value)} className="w-7 h-7 rounded flex-shrink-0" />
+                      <input type="text" value={metalSettings.top.color} onChange={(e) => updateMetalSetting("top", "color", e.target.value)} className={inputBase} />
+                    </div>
+                    <div className="space-y-2.5">
+                      <SliderRow label="Roughness" value={metalSettings.top.roughness} min={0} max={1} step={0.01} onChange={(v) => updateMetalSetting("top", "roughness", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Brightness" value={metalSettings.top.brightness} min={0.5} max={2} step={0.05} onChange={(v) => updateMetalSetting("top", "brightness", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Emissive" value={metalSettings.top.emissiveIntensity} min={0} max={2} step={0.01} onChange={(v) => updateMetalSetting("top", "emissiveIntensity", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Env Reflect" value={metalSettings.top.envMapIntensity} min={0} max={4} step={0.1} onChange={(v) => updateMetalSetting("top", "envMapIntensity", v)} display={(v) => v.toFixed(1)} />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Roughness: {metalSettings.bottom.roughness.toFixed(2)} (
-                      {metalSettings.bottom.roughness > 0.5
-                        ? "Matte"
-                        : "Glossy"}
-                      )
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={metalSettings.bottom.roughness}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "bottom",
-                          "roughness",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
+
+                  <div className="pt-1">
+                    <div className="mb-2 font-mono text-[9px] text-white/25 uppercase tracking-wider">Bottom Metal</div>
+                    <div className="flex items-center gap-2 mb-2.5">
+                      <input type="color" value={metalSettings.bottom.color} onChange={(e) => updateMetalSetting("bottom", "color", e.target.value)} className="w-7 h-7 rounded flex-shrink-0" />
+                      <input type="text" value={metalSettings.bottom.color} onChange={(e) => updateMetalSetting("bottom", "color", e.target.value)} className={inputBase} />
+                    </div>
+                    <div className="space-y-2.5">
+                      <SliderRow label="Roughness" value={metalSettings.bottom.roughness} min={0} max={1} step={0.01} onChange={(v) => updateMetalSetting("bottom", "roughness", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Brightness" value={metalSettings.bottom.brightness} min={0.5} max={2} step={0.05} onChange={(v) => updateMetalSetting("bottom", "brightness", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Emissive" value={metalSettings.bottom.emissiveIntensity} min={0} max={2} step={0.01} onChange={(v) => updateMetalSetting("bottom", "emissiveIntensity", v)} display={(v) => v.toFixed(2)} />
+                      <SliderRow label="Env Reflect" value={metalSettings.bottom.envMapIntensity} min={0} max={4} step={0.1} onChange={(v) => updateMetalSetting("bottom", "envMapIntensity", v)} display={(v) => v.toFixed(1)} />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Brightness: {metalSettings.bottom.brightness.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min={0.5}
-                      max={2}
-                      step={0.05}
-                      value={metalSettings.bottom.brightness}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "bottom",
-                          "brightness",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Emissive Boost:{" "}
-                      {metalSettings.bottom.emissiveIntensity.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={2}
-                      step={0.01}
-                      value={metalSettings.bottom.emissiveIntensity}
-                      onChange={(e) =>
-                        updateMetalSetting(
-                          "bottom",
-                          "emissiveIntensity",
-                          parseFloat(e.target.value)
-                        )
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <label className="text-sm flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={metalSettings.bottom.castShadow}
-                        onChange={(e) =>
-                          updateMetalSetting(
-                            "bottom",
-                            "castShadow",
-                            e.target.checked
-                          )
-                        }
-                      />
-                      Cast Shadow
-                    </label>
-                    <label className="text-sm flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={metalSettings.bottom.receiveShadow}
-                        onChange={(e) =>
-                          updateMetalSetting(
-                            "bottom",
-                            "receiveShadow",
-                            e.target.checked
-                          )
-                        }
-                      />
-                      Receive Shadow
-                    </label>
-                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {divider}
+
+        {/* ── LIGHTING ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => toggleSection("lighting")}>
+            <span className={sectionTitle}>Lighting</span>
+            <span className="text-white/20 text-[10px]">{openSections.lighting ? "▾" : "▸"}</span>
+          </button>
+          {openSections.lighting && (
+            <div className="px-4 pb-4 space-y-3">
+              <SliderRow label="Brightness" value={lightingSettings.exposure} min={0} max={4} step={0.01} onChange={(v) => updateLightingSetting("exposure", v)} display={(v) => v.toFixed(2)} />
+
+              {/* Mode toggle */}
+              <div>
+                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Mode</div>
+                <div className="flex gap-1.5">
+                  {([{ label: "Bar", enabled: true }, { label: "Studio", enabled: false }] as const).map(({ label, enabled }) => (
+                    <button
+                      key={label}
+                      onClick={() => setBar((p) => ({ ...p, enabled }))}
+                      className={`flex-1 py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${bar.enabled === enabled ? pillActive : pillInactive}`}
+                      style={{ borderRadius: "8px" }}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
               </div>
-            </div>
 
-            {/* Controls Section */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Controls
-              </h3>
-              <div className="space-y-3">
-                {/* Presets */}
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <h3 className="text-sm font-semibold text-gray-800 mb-2">
-                    Presets
-                  </h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      onClick={saveSettingsToJson}
-                      className="px-3 py-2 bg-gray-700 hover:bg-gray-800 text-white rounded"
-                    >
-                      Save JSON
-                    </button>
-                    <button
-                      onClick={onLoadPresetClick}
-                      className="px-3 py-2 bg-gray-200 hover:bg-gray-300 rounded"
-                    >
-                      Load JSON
-                    </button>
-                  </div>
-                  <input
-                    ref={presetInputRef}
-                    type="file"
-                    accept="application/json"
-                    onChange={onPresetFileSelected}
-                    className="hidden"
-                  />
+              {/* Bar light controls */}
+              {bar.enabled && (
+                <div className="space-y-3">
+                  <SliderRow label="Intensity" value={bar.intensity} min={0} max={20} step={0.05} onChange={(v) => setBar((p) => ({ ...p, intensity: v }))} display={(v) => v.toFixed(1)} />
+                  <SliderRow label="Rotation" value={bar.rotation} min={0} max={Math.PI * 2} step={0.01} onChange={(v) => setBar((p) => ({ ...p, rotation: v }))} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
+                  <SliderRow label="Height" value={bar.y} min={-3} max={3} step={0.01} onChange={(v) => setBar((p) => ({ ...p, y: v }))} display={(v) => v.toFixed(2)} />
+                  <SliderRow label="Distance" value={bar.distance} min={0.5} max={15} step={0.1} onChange={(v) => setBar((p) => ({ ...p, distance: v }))} display={(v) => v.toFixed(1)} />
                 </div>
+              )}
+
+              {/* Advanced toggle */}
+              <button onClick={() => setLightingAdvancedOpen((p) => !p)} className="flex items-center gap-1.5 text-white/25 hover:text-white/45 transition-colors pt-1">
+                <span className="font-mono text-[10px] uppercase tracking-wider">{lightingAdvancedOpen ? "▾" : "▸"} Advanced</span>
+              </button>
+
+              {lightingAdvancedOpen && (
+                <div className="space-y-3 pt-1">
+                  {!bar.enabled && (
+                    <SliderRow label="HDRI Intensity" value={lightingSettings.envIntensity} min={0} max={4} step={0.01} onChange={(v) => updateLightingSetting("envIntensity", v)} display={(v) => v.toFixed(2)} />
+                  )}
+                  {bar.enabled && (
+                    <>
+                      <SliderRow label="Bar Width" value={bar.width} min={0.1} max={12} step={0.1} onChange={(v) => setBar((p) => ({ ...p, width: v }))} display={(v) => v.toFixed(1)} />
+                      <SliderRow label="Bar Height" value={bar.height} min={0.1} max={16} step={0.1} onChange={(v) => setBar((p) => ({ ...p, height: v }))} display={(v) => v.toFixed(1)} />
+                    </>
+                  )}
+                  <SliderRow label="Other Strength" value={lightingSettings.otherStrength} min={0} max={3} step={0.01} onChange={(v) => updateLightingSetting("otherStrength", v)} display={(v) => `${v.toFixed(2)}×`} />
+                  <SliderRow label="Other Rotation" value={lightingSettings.otherRotation} min={0} max={Math.PI * 2} step={0.01} onChange={(v) => updateLightingSetting("otherRotation", v)} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
+                  <SliderRow label="Ambient" value={lightingSettings.ambientIntensity} min={0} max={10} step={0.1} onChange={(v) => updateLightingSetting("ambientIntensity", v)} display={(v) => v.toFixed(1)} />
+                  <SliderRow label="Fill" value={lightingSettings.fillLightIntensity} min={0} max={10} step={0.1} onChange={(v) => updateLightingSetting("fillLightIntensity", v)} display={(v) => v.toFixed(1)} />
+                  <SliderRow label="Rim" value={lightingSettings.rimLightIntensity} min={0} max={10} step={0.1} onChange={(v) => updateLightingSetting("rimLightIntensity", v)} display={(v) => v.toFixed(1)} />
+                  <SliderRow label="Directional" value={lightingSettings.directionalIntensity} min={0} max={10} step={0.1} onChange={(v) => updateLightingSetting("directionalIntensity", v)} display={(v) => v.toFixed(1)} />
+                  <SliderRow label="FOV" value={cameraFov} min={10} max={60} step={0.1} onChange={(v) => setCameraFov(v)} display={(v) => `${Math.round(v)}°`} />
+                  <div>
+                    <div className="mb-1.5 font-mono text-[9px] text-white/25 uppercase tracking-wider">Light Direction (X · Y · Z)</div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {([0, 1, 2] as const).map((i) => (
+                        <input
+                          key={i}
+                          type="number"
+                          value={lightingSettings.directionalPosition[i]}
+                          onChange={(e) => {
+                            const pos = [...lightingSettings.directionalPosition] as [number, number, number];
+                            pos[i] = parseFloat(e.target.value) || 0;
+                            updateLightingSetting("directionalPosition", pos);
+                          }}
+                          placeholder={["X", "Y", "Z"][i]}
+                          className="bg-white/[0.05] border border-white/[0.1] rounded text-white/60 font-mono text-[11px] px-2 py-1 outline-none focus:border-white/25 transition-colors text-center w-full"
+                        />
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {divider}
+
+        {/* ── CONTROLS ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => toggleSection("controls")}>
+            <span className={sectionTitle}>Controls</span>
+            <span className="text-white/20 text-[10px]">{openSections.controls ? "▾" : "▸"}</span>
+          </button>
+          {openSections.controls && (
+            <div className="px-4 pb-4 space-y-4">
+              {/* Rotation */}
+              <div>
+                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Rotation</div>
                 <button
                   onClick={toggleAutoRotation}
                   disabled={isRecording}
-                  className={`w-full px-4 py-2 rounded-lg font-medium transition-colors ${
-                    isAutoRotating
-                      ? "bg-red-500 hover:bg-red-600 text-white"
-                      : "bg-green-500 hover:bg-green-600 text-white"
-                  } ${isRecording ? "opacity-50 cursor-not-allowed" : ""}`}
-                >
-                  {isAutoRotating ? "Stop Rotation" : "Start Rotation"}
-                </button>
-
-                <button
-                  onClick={saveToPNG}
-                  disabled={isRecording}
-                  className={`w-full px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors ${
-                    isRecording ? "opacity-50 cursor-not-allowed" : ""
+                  className={`w-full py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${
+                    isRecording ? "opacity-40 cursor-not-allowed border-white/10 text-white/25" :
+                    isAutoRotating ? "border-red-400/50 bg-red-400/[0.1] text-red-300/80 hover:bg-red-400/[0.15]" : `${pillInactive}`
                   }`}
+                  style={{ borderRadius: "8px" }}
                 >
-                  Save as PNG
+                  {isAutoRotating ? "Pause Rotation" : "Auto Rotate"}
                 </button>
-
-                <button
-                  onClick={startVideoRecording}
-                  disabled={isRecording}
-                  className={`w-full px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg font-medium transition-colors ${
-                    isRecording ? "opacity-50 cursor-not-allowed" : ""
-                  }`}
-                >
-                  {isRecording
-                    ? `Recording... ${Math.round(recordingProgress)}%`
-                    : "Record 360° Video"}
-                </button>
-              </div>
-            </div>
-
-            {/* Lighting Settings */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Lighting Settings
-              </h3>
-              <div className="space-y-4">
-                {/* 전체 노출 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Overall Brightness (Exposure):{" "}
-                    {lightingSettings.exposure.toFixed(2)}
-                  </label>
-                  <input
-                    type="range"
-                    min={0}
-                    max={4} // ↑ 범위 확장
-                    step={0.01}
-                    value={lightingSettings.exposure}
-                    onChange={(e) =>
-                      setLightingSettings((p) => ({
-                        ...p,
-                        exposure: parseFloat(e.target.value),
-                      }))
-                    }
-                    className="w-full"
-                  />
-                </div>
-
-                {/* 바 조명 */}
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-semibold text-gray-800">
-                      Bar Light
-                    </span>
-                    <label className="text-sm flex items-center gap-2">
-                      <input
-                        type="checkbox"
-                        checked={bar.enabled}
-                        onChange={(e) =>
-                          setBar((p) => ({ ...p, enabled: e.target.checked }))
-                        }
-                      />
-                      Enable
-                    </label>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="col-span-2 flex items-center gap-2">
-                      <input
-                        type="color"
-                        value={bar.color}
-                        onChange={(e) =>
-                          setBar((p) => ({ ...p, color: e.target.value }))
-                        }
-                        className="w-10 h-7 rounded border"
-                      />
-                      <input
-                        type="text"
-                        value={bar.color}
-                        onChange={(e) =>
-                          setBar((p) => ({ ...p, color: e.target.value }))
-                        }
-                        className="flex-1 p-1 text-xs border rounded"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Intensity: {bar.intensity.toFixed(2)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={20} // ↑ 범위 확장
-                        step={0.05}
-                        value={bar.intensity}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            intensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div className="col-span-2">
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Bar Rotation:{" "}
-                        {Math.round((bar.rotation * 180) / Math.PI)}°
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={Math.PI * 2}
-                        step={0.01}
-                        value={bar.rotation}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            rotation: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Height (Y): {bar.y.toFixed(2)}
-                      </label>
-                      <input
-                        type="range"
-                        min={-3}
-                        max={3}
-                        step={0.01}
-                        value={bar.y}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            y: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Distance: {bar.distance.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0.5}
-                        max={15} // ↑ 범위 확장
-                        step={0.1}
-                        value={bar.distance}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            distance: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Width: {bar.width.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={12} // ↑ 범위 확장
-                        step={0.1}
-                        value={bar.width}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            width: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Height: {bar.height.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0.1}
-                        max={16} // ↑ 범위 확장
-                        step={0.1}
-                        value={bar.height}
-                        onChange={(e) =>
-                          setBar((p) => ({
-                            ...p,
-                            height: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* 나머지 조명 */}
-                <div className="bg-gray-50 p-3 rounded-lg">
-                  <div className="text-sm font-semibold text-gray-800 mb-2">
-                    Other Lights
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Other Lights Strength:{" "}
-                      {lightingSettings.otherStrength.toFixed(2)}×
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={3} // ↑ 범위 확장
-                      step={0.01}
-                      value={lightingSettings.otherStrength}
-                      onChange={(e) =>
-                        setLightingSettings((p) => ({
-                          ...p,
-                          otherStrength: parseFloat(e.target.value),
-                        }))
-                      }
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div className="mt-3">
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Other Lights Rotation:{" "}
-                      {Math.round(
-                        (lightingSettings.otherRotation * 180) / Math.PI
-                      )}
-                      °
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.PI * 2}
-                      step={0.01}
-                      value={lightingSettings.otherRotation}
-                      onChange={(e) =>
-                        setLightingSettings((p) => ({
-                          ...p,
-                          otherRotation: parseFloat(e.target.value),
-                        }))
-                      }
-                      className="w-full"
-                    />
-                  </div>
-
-                  <div className="border-t mt-3 pt-3 grid gap-3">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Ambient: {lightingSettings.ambientIntensity.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={10} // ↑ 범위 확장
-                        step={0.1}
-                        value={lightingSettings.ambientIntensity}
-                        onChange={(e) =>
-                          setLightingSettings((p) => ({
-                            ...p,
-                            ambientIntensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Fill: {lightingSettings.fillLightIntensity.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={10} // ↑ 범위 확장
-                        step={0.1}
-                        value={lightingSettings.fillLightIntensity}
-                        onChange={(e) =>
-                          setLightingSettings((p) => ({
-                            ...p,
-                            fillLightIntensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Rim: {lightingSettings.rimLightIntensity.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={10} // ↑ 범위 확장
-                        step={0.1}
-                        value={lightingSettings.rimLightIntensity}
-                        onChange={(e) =>
-                          setLightingSettings((p) => ({
-                            ...p,
-                            rimLightIntensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Directional:{" "}
-                        {lightingSettings.directionalIntensity.toFixed(1)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={10} // ↑ 범위 확장
-                        step={0.1}
-                        value={lightingSettings.directionalIntensity}
-                        onChange={(e) =>
-                          setLightingSettings((p) => ({
-                            ...p,
-                            directionalIntensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-
-                    {/* (bar 미사용시) HDRI 강도 */}
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Base Environment Intensity (when Bar disabled):{" "}
-                        {lightingSettings.envIntensity.toFixed(2)}
-                      </label>
-                      <input
-                        type="range"
-                        min={0}
-                        max={4} // ↑ 범위 확장
-                        step={0.01}
-                        value={lightingSettings.envIntensity}
-                        onChange={(e) =>
-                          setLightingSettings((p) => ({
-                            ...p,
-                            envIntensity: parseFloat(e.target.value),
-                          }))
-                        }
-                        className="w-full"
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* 방향광 위치 입력은 유지 */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Light Angle (Base Position)
-                  </label>
-                  <div className="grid grid-cols-3 gap-2">
-                    <input
-                      type="number"
-                      min={-20}
-                      max={20}
-                      value={lightingSettings.directionalPosition[0]}
-                      onChange={(e) =>
-                        updateLightingSetting("directionalPosition", [
-                          parseFloat(e.target.value),
-                          lightingSettings.directionalPosition[1],
-                          lightingSettings.directionalPosition[2],
-                        ])
-                      }
-                      className="w-full p-1 text-xs border rounded"
-                      placeholder="X"
-                    />
-                    <input
-                      type="number"
-                      min={-20}
-                      max={20}
-                      value={lightingSettings.directionalPosition[1]}
-                      onChange={(e) =>
-                        updateLightingSetting("directionalPosition", [
-                          lightingSettings.directionalPosition[0],
-                          parseFloat(e.target.value),
-                          lightingSettings.directionalPosition[2],
-                        ])
-                      }
-                      className="w-full p-1 text-xs border rounded"
-                      placeholder="Y"
-                    />
-                    <input
-                      type="number"
-                      min={-20}
-                      max={20}
-                      value={lightingSettings.directionalPosition[2]}
-                      onChange={(e) =>
-                        updateLightingSetting("directionalPosition", [
-                          lightingSettings.directionalPosition[0],
-                          lightingSettings.directionalPosition[1],
-                          parseFloat(e.target.value),
-                        ])
-                      }
-                      className="w-full p-1 text-xs border rounded"
-                      placeholder="Z"
-                    />
-                  </div>
-                </div>
-
-                {/* Camera / Perspective */}
-                <div>
-                  <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                    Camera / Perspective
-                  </h3>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Perspective (FOV): {Math.round(cameraFov)}°
-                  </label>
-                  <input
-                    type="range"
-                    min={10}
-                    max={60}
-                    step={0.1}
-                    value={cameraFov}
-                    onChange={(e) => setCameraFov(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* 이미지 업로드 */}
-            <div>
-              <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                Custom Image
-              </h3>
-              <div className="space-y-3">
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full p-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-400 transition-colors"
-                >
-                  <div className="text-center">
-                    <div className="text-gray-600">Click to upload image</div>
-                    <div className="text-sm text-gray-400 mt-1">
-                      PNG, JPG up to 10MB
-                    </div>
-                  </div>
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-                {customImage && (
-                  <div className="p-2 bg-green-50 border border-green-200 rounded">
-                    <div className="text-sm text-green-700">
-                      ✓ Custom image loaded
-                    </div>
+                {!isAutoRotating && !isRecording && (
+                  <div className="mt-3 space-y-2.5">
+                    <SliderRow label="Y (Horiz)" value={rotation[1]} min={0} max={Math.PI * 2} step={0.01} onChange={(v) => setRotation([rotation[0], v, rotation[2]])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
+                    <SliderRow label="X (Vert)" value={rotation[0]} min={-Math.PI / 2} max={Math.PI / 2} step={0.01} onChange={(v) => setRotation([v, rotation[1], rotation[2]])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
+                    <SliderRow label="Z (Roll)" value={rotation[2]} min={-Math.PI} max={Math.PI} step={0.01} onChange={(v) => setRotation([rotation[0], rotation[1], v])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
                   </div>
                 )}
               </div>
-            </div>
 
-            {/* 수동 회전 */}
-            {!isAutoRotating && !isRecording && (
+              {/* Export */}
               <div>
-                <h3 className="text-lg font-semibold mb-3 text-gray-800">
-                  Manual Rotation
-                </h3>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Y-axis (Horizontal):{" "}
-                      {Math.round((rotation[1] * 180) / Math.PI)}°
-                    </label>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.PI * 2}
-                      step={0.1}
-                      value={rotation[1]}
-                      onChange={(e) =>
-                        setRotation([
-                          rotation[0],
-                          parseFloat(e.target.value),
-                          rotation[2],
-                        ])
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      X-axis (Vertical):{" "}
-                      {Math.round((rotation[0] * 180) / Math.PI)}°
-                    </label>
-                    <input
-                      type="range"
-                      min={-Math.PI / 2}
-                      max={Math.PI / 2}
-                      step={0.1}
-                      value={rotation[0]}
-                      onChange={(e) =>
-                        setRotation([
-                          parseFloat(e.target.value),
-                          rotation[1],
-                          rotation[2],
-                        ])
-                      }
-                      className="w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Z-axis (Roll): {Math.round((rotation[2] * 180) / Math.PI)}
-                      °
-                    </label>
-                    <input
-                      type="range"
-                      min={-Math.PI}
-                      max={Math.PI}
-                      step={0.1}
-                      value={rotation[2]}
-                      onChange={(e) =>
-                        setRotation([
-                          rotation[0],
-                          rotation[1],
-                          parseFloat(e.target.value),
-                        ])
-                      }
-                      className="w-full"
-                    />
-                  </div>
+                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Export</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord} className={`${pillBase} ${isRecording || isPreparingRecord ? "opacity-40 cursor-not-allowed " + pillInactive : pillInactive}`}>
+                    PNG
+                  </button>
+                  {!isRecording && !isPreparingRecord ? (
+                    <button onClick={startVideoRecording} className={`${pillBase} ${pillInactive}`}>
+                      360° Video
+                    </button>
+                  ) : (
+                    <button onClick={cancelRecording} className={`${pillBase} border-purple-400/50 bg-purple-400/[0.1] text-purple-300/80 hover:border-red-400/50 hover:bg-red-400/[0.1] hover:text-red-300/80`}>
+                      {isPreparingRecord ? "Preparing…  ✕" : `${Math.round(recordingProgress)}%…  ✕`}
+                    </button>
+                  )}
                 </div>
               </div>
-            )}
 
-            <button
-              onClick={resetToDefault}
-              className="w-full p-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-colors"
-            >
-              Reset to Default
-            </button>
-          </div>
+              {/* Preset */}
+              <div>
+                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Preset</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button onClick={saveSettingsToJson} className={`${pillBase} ${pillInactive}`}>Save JSON</button>
+                  <button onClick={onLoadPresetClick} className={`${pillBase} ${pillInactive}`}>Load JSON</button>
+                </div>
+                <input ref={presetInputRef} type="file" accept="application/json" onChange={onPresetFileSelected} className="hidden" />
+              </div>
+
+              {/* Reset */}
+              <button
+                onClick={resetToDefault}
+                className="w-full py-2 font-mono text-[10px] uppercase tracking-wider border border-white/[0.08] text-white/20 hover:text-red-400/60 hover:border-red-400/25 transition-all duration-150"
+                style={{ borderRadius: "8px" }}
+              >
+                Reset to Default
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 relative bg-white">
-          <Canvas
-            camera={{ position: [0, 0, 4], fov: 25 }}
-            shadows
-            className="bg-transparent"
-            style={{ background: "transparent" }}
-            gl={{
-              preserveDrawingBuffer: true,
-              alpha: true,
-              localClippingEnabled: true,
-            }}
-          >
-            <SceneExposure exposure={lightingSettings.exposure} />
-            <CameraPerspective fov={cameraFov} />
-            <CustomLighting settings={lightingSettings} />
-            {
-              /* 적용할 라벨 텍스처 계산 */
-              (() => {
-                const selectedTexture =
-                  selectedFlavor === "none"
-                    ? undefined
-                    : flavorTextures[selectedFlavor];
-                const defaultBySize =
-                  canSize === "475ml"
-                    ? `${BASE}/labels/475d.png`
-                    : `${BASE}/labels/355d.png`;
-                const appliedTexture =
-                  customImage || selectedTexture || defaultBySize;
-                return (
-                  <EditableSodaCan
-                    customTexture={appliedTexture}
-                    rotation={rotation}
-                    isAutoRotating={isAutoRotating}
-                    isRecording={isRecording}
-                    recordingProgress={recordingProgress}
-                    canSize={canSize}
-                    labelRoughness={labelRoughness}
-                    metalSettings={metalSettings}
-                  />
-                );
-              })()
-            }
-            <CustomOrbitControls controlsRef={controlsRef} />
-            <RotatingEnvironment
-              barRotation={bar.rotation}
-              otherRotation={lightingSettings.otherRotation}
-              intensity={lightingSettings.envIntensity}
-              bar={bar}
-            />
-          </Canvas>
-        </div>
+        {/* Bottom padding */}
+        <div className="flex-1 min-h-8" />
       </div>
     </div>
   );
