@@ -5,13 +5,17 @@
 html, body, #__next { height: 100%; }
 * { box-sizing: border-box; }
 
-/* Custom scrollbar */
+/* Custom scrollbar — dark */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 999px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.32); }
 
-/* Range input */
+/* Custom scrollbar — light */
+[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.18); }
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.32); }
+
+/* Range input — dark */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
@@ -32,16 +36,24 @@ input[type="range"]::-webkit-slider-thumb {
   box-shadow: 0 0 0 1px rgba(0,0,0,0.3);
 }
 input[type="range"]::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
-  background: #fff;
-  cursor: pointer;
-  border: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #fff; cursor: pointer; border: none;
 }
-input[type="range"]:hover {
-  background: rgba(255,255,255,0.2);
-}
+input[type="range"]:hover { background: rgba(255,255,255,0.2); }
+
+/* Range input — light */
+[data-theme="light"] input[type="range"] { background: rgba(0,0,0,0.12); }
+[data-theme="light"] input[type="range"]:hover { background: rgba(0,0,0,0.2); }
+[data-theme="light"] input[type="range"]::-webkit-slider-thumb { background: #333; box-shadow: 0 0 0 1px rgba(255,255,255,0.4); }
+[data-theme="light"] input[type="range"]::-moz-range-thumb { background: #333; }
+
+/* SliderRow text — dark (default) */
+.sr-label { color: rgba(255,255,255,0.45); }
+.sr-value { color: rgba(255,255,255,0.30); }
+
+/* SliderRow text — light */
+[data-theme="light"] .sr-label { color: rgba(0,0,0,0.50); }
+[data-theme="light"] .sr-value { color: rgba(0,0,0,0.35); }
 
 /* Color input */
 input[type="color"] {
@@ -52,5 +64,6 @@ input[type="color"] {
   cursor: pointer;
   background: transparent;
 }
+[data-theme="light"] input[type="color"] { border-color: rgba(0,0,0,0.18); }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }

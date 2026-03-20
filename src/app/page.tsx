@@ -286,8 +286,8 @@ function SliderRow({ label, value, min, max, step, onChange, display }: {
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between items-center">
-        <span className="font-mono text-[11px] text-white/45">{label}</span>
-        <span className="font-mono text-[11px] text-white/30 tabular-nums">{display(value)}</span>
+        <span className="sr-label font-mono text-[11px]">{label}</span>
+        <span className="sr-value font-mono text-[11px] tabular-nums">{display(value)}</span>
       </div>
       <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="w-full" />
     </div>
@@ -334,8 +334,13 @@ export default function Page() {
   const [lightingAdvancedOpen, setLightingAdvancedOpen] = useState(false);
   const [openSections, setOpenSections] = useState({ can: true, image: true, material: true, lighting: true, controls: true });
   const [recentImages, setRecentImages] = useState<string[]>([]);
+  const [isDarkMode, setIsDarkMode] = useState(true);
 
   const [isPreparingRecord, setIsPreparingRecord] = useState(false);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", isDarkMode ? "dark" : "light");
+  }, [isDarkMode]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
@@ -574,13 +579,27 @@ export default function Page() {
   }, [canSize]);
 
   // ── Shared style tokens ────────────────────────────────────────────────────
+  const d = isDarkMode;
   const pillBase = "px-3 py-1.5 rounded-full font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 cursor-pointer";
-  const pillInactive = "border-white/[0.15] text-white/45 hover:border-white/30 hover:text-white/70";
+  const pillInactive = d ? "border-white/[0.15] text-white/45 hover:border-white/30 hover:text-white/70" : "border-black/[0.15] text-black/50 hover:border-black/30 hover:text-black/70";
   const pillActive = "border-blue-400/70 bg-blue-400/[0.18] text-white";
-  const inputBase = "bg-white/[0.05] border border-white/[0.1] rounded text-white/70 font-mono text-[11px] px-2 py-1 outline-none focus:border-white/25 transition-colors w-full";
-  const sectionBtn = "w-full flex items-center justify-between px-4 py-3 text-left transition-colors hover:bg-white/[0.025]";
-  const sectionTitle = "font-mono text-[10px] uppercase tracking-[0.18em] text-white/40";
-  const divider = <div className="mx-4 border-t border-white/[0.07]" />;
+  const inputBase = d
+    ? "bg-white/[0.05] border border-white/[0.1] rounded text-white/70 font-mono text-[11px] px-2 py-1 outline-none focus:border-white/25 transition-colors w-full"
+    : "bg-black/[0.05] border border-black/[0.1] rounded text-black/65 font-mono text-[11px] px-2 py-1 outline-none focus:border-black/25 transition-colors w-full";
+  const sectionBtn = `w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${d ? "hover:bg-white/[0.025]" : "hover:bg-black/[0.025]"}`;
+  const sectionTitle = `font-mono text-[10px] uppercase tracking-[0.18em] ${d ? "text-white/40" : "text-black/40"}`;
+  const chevronCls = `text-[10px] ${d ? "text-white/20" : "text-black/25"}`;
+  const divider = <div className={`mx-4 border-t ${d ? "border-white/[0.07]" : "border-black/[0.07]"}`} />;
+  const subLabel = `font-mono text-[10px] ${d ? "text-white/25" : "text-black/30"} uppercase tracking-wider`;
+  const subLabelSm = `font-mono text-[9px] ${d ? "text-white/25" : "text-black/30"} uppercase tracking-wider`;
+  const infoCard = `flex items-center justify-between px-3 py-2 rounded-lg ${d ? "bg-white/[0.03] border border-white/[0.06]" : "bg-black/[0.03] border border-black/[0.06]"}`;
+  const dropZoneIdle = d ? "border-white/[0.12] hover:border-white/25 bg-white/[0.02] hover:bg-white/[0.035]" : "border-black/[0.12] hover:border-black/25 bg-black/[0.02] hover:bg-black/[0.035]";
+  const removeBtn = d
+    ? "w-full py-1.5 font-mono text-[10px] text-white/25 uppercase tracking-wider border border-white/[0.07] rounded-lg hover:text-white/45 hover:border-white/[0.18] transition-all"
+    : "w-full py-1.5 font-mono text-[10px] text-black/30 uppercase tracking-wider border border-black/[0.07] rounded-lg hover:text-black/50 hover:border-black/[0.18] transition-all";
+  const resetBtnCls = d
+    ? "w-full py-2 font-mono text-[10px] uppercase tracking-wider border border-white/[0.08] text-white/20 hover:text-red-400/60 hover:border-red-400/25 transition-all duration-150"
+    : "w-full py-2 font-mono text-[10px] uppercase tracking-wider border border-black/[0.08] text-black/25 hover:text-red-500/60 hover:border-red-500/25 transition-all duration-150";
 
   // ── Canvas texture ─────────────────────────────────────────────────────────
   const selectedTexture = selectedFlavor === "none" ? undefined : flavorTextures[selectedFlavor];
@@ -588,38 +607,26 @@ export default function Page() {
   const appliedTexture = customImage || selectedTexture || defaultBySize;
 
   return (
-    <div className="h-screen bg-black flex overflow-hidden">
+    <div className="h-screen flex overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
+
       {/* ── 3D Canvas ── */}
       <div
-        className="flex-1 relative bg-black"
+        className="flex-1 relative"
+        style={{ background: d ? "#000" : "#ebebeb" }}
         onDragOver={handleCanvasDragOver}
         onDragLeave={handleCanvasDragLeave}
         onDrop={handleCanvasDrop}
       >
         {isCanvasDragOver && (
           <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center" style={{ background: "rgba(74,158,255,0.06)", border: "2px dashed rgba(74,158,255,0.35)" }}>
-            <span className="font-mono text-[12px] text-blue-300/60 uppercase tracking-widest">Drop image</span>
+            <span className="font-mono text-[12px] text-blue-400/70 uppercase tracking-widest">Drop image</span>
           </div>
         )}
-        <Canvas
-          camera={{ position: [0, 0, 4], fov: 25 }}
-          shadows
-          style={{ background: "transparent" }}
-          gl={{ preserveDrawingBuffer: true, alpha: true, localClippingEnabled: true }}
-        >
+        <Canvas camera={{ position: [0, 0, 4], fov: 25 }} shadows style={{ background: "transparent" }} gl={{ preserveDrawingBuffer: true, alpha: true, localClippingEnabled: true }}>
           <SceneExposure exposure={lightingSettings.exposure} />
           <CameraPerspective fov={cameraFov} />
           <CustomLighting settings={lightingSettings} />
-          <EditableSodaCan
-            customTexture={appliedTexture}
-            rotation={rotation}
-            isAutoRotating={isAutoRotating}
-            isRecording={isRecording}
-            recordingProgress={recordingProgress}
-            canSize={canSize}
-            labelRoughness={labelRoughness}
-            metalSettings={metalSettings}
-          />
+          <EditableSodaCan customTexture={appliedTexture} rotation={rotation} isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress} canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings} />
           <CustomOrbitControls controlsRef={controlsRef} />
           <RotatingEnvironment barRotation={bar.rotation} otherRotation={lightingSettings.otherRotation} intensity={lightingSettings.envIntensity} bar={bar} />
         </Canvas>
@@ -628,12 +635,12 @@ export default function Page() {
       {/* ── Right Sidebar ── */}
       <div
         className="flex-shrink-0 h-screen overflow-y-auto flex flex-col"
-        style={{ width: "272px", background: "rgba(7,7,7,0.97)", borderLeft: "1px solid rgba(255,255,255,0.07)" }}
+        style={{ width: "272px", background: d ? "rgba(7,7,7,0.97)" : "rgba(242,242,242,0.98)", borderLeft: d ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.08)" }}
       >
         {/* Header */}
         <div className="px-4 pt-5 pb-4">
-          <div className="font-mono text-[12px] text-white uppercase tracking-[0.22em]">Spirit Can Editor</div>
-          <div className="font-mono text-[10px] text-white/25 tracking-[0.12em] mt-1">2.0</div>
+          <div className={`font-mono text-[12px] uppercase tracking-[0.22em] ${d ? "text-white" : "text-black/75"}`}>Spirit Can Editor</div>
+          <div className={`font-mono text-[10px] tracking-[0.12em] mt-1 ${d ? "text-white/25" : "text-black/30"}`}>2.0</div>
         </div>
 
         {divider}
@@ -642,18 +649,13 @@ export default function Page() {
         <div>
           <button className={sectionBtn} onClick={() => toggleSection("can")}>
             <span className={sectionTitle}>Can</span>
-            <span className="text-white/20 text-[10px]">{openSections.can ? "▾" : "▸"}</span>
+            <span className={chevronCls}>{openSections.can ? "▾" : "▸"}</span>
           </button>
           {openSections.can && (
             <div className="px-4 pb-4">
               <div className="flex gap-1.5">
                 {(["355ml", "475ml"] as CanSize[]).map((size) => (
-                  <button
-                    key={size}
-                    onClick={() => setCanSize(size)}
-                    className={`flex-1 py-2.5 px-2 rounded-lg border transition-all duration-150 text-left font-mono ${canSize === size ? pillActive : pillInactive}`}
-                    style={{ borderRadius: "8px" }}
-                  >
+                  <button key={size} onClick={() => setCanSize(size)} className={`flex-1 py-2.5 px-2 rounded-lg border transition-all duration-150 text-left font-mono ${canSize === size ? pillActive : pillInactive}`} style={{ borderRadius: "8px" }}>
                     <div className="text-[11px] uppercase tracking-wider">{size}</div>
                     <div className="text-[9px] opacity-40 mt-0.5 normal-case tracking-normal font-normal">{canSizeSpecs[size].labelSizeText}</div>
                   </button>
@@ -669,55 +671,43 @@ export default function Page() {
         <div>
           <button className={sectionBtn} onClick={() => toggleSection("image")}>
             <span className={sectionTitle}>Image</span>
-            <span className="text-white/20 text-[10px]">{openSections.image ? "▾" : "▸"}</span>
+            <span className={chevronCls}>{openSections.image ? "▾" : "▸"}</span>
           </button>
           {openSections.image && (
             <div className="px-4 pb-4 space-y-2">
               <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
+                onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
                 className={`flex flex-col items-center justify-center gap-1.5 py-7 rounded-lg border cursor-pointer transition-all duration-150 ${
-                  isDragOver
-                    ? "border-blue-400/60 bg-blue-400/[0.07]"
-                    : customImage
-                    ? "border-green-400/40 bg-green-400/[0.05]"
-                    : "border-white/[0.12] hover:border-white/25 bg-white/[0.02] hover:bg-white/[0.035]"
+                  isDragOver ? "border-blue-400/60 bg-blue-400/[0.07]"
+                  : customImage ? "border-green-400/40 bg-green-400/[0.05]"
+                  : dropZoneIdle
                 }`}
               >
-                <div className={`font-mono text-[11px] uppercase tracking-wider ${customImage ? "text-green-400/70" : "text-white/35"}`}>
+                <div className={`font-mono text-[11px] uppercase tracking-wider ${customImage ? "text-green-500/70" : d ? "text-white/35" : "text-black/40"}`}>
                   {isDragOver ? "Drop image" : customImage ? "✓  Image loaded" : "Drop or click to upload"}
                 </div>
-                <div className="font-mono text-[9px] text-white/20 uppercase">PNG · JPG</div>
+                <div className={`font-mono text-[9px] uppercase ${d ? "text-white/20" : "text-black/25"}`}>PNG · JPG · Ctrl+V</div>
               </div>
               {/* Optimal size info */}
-              <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.06]">
-                <span className="font-mono text-[9px] text-white/25 uppercase tracking-wider">Optimal size</span>
-                <span className="font-mono text-[10px] text-white/45">{canSizeSpecs[canSize].labelSizeText}</span>
+              <div className={infoCard}>
+                <span className={subLabelSm}>Optimal size</span>
+                <span className={`font-mono text-[10px] ${d ? "text-white/45" : "text-black/50"}`}>{canSizeSpecs[canSize].labelSizeText}</span>
               </div>
               {customImage && (
-                <button
-                  onClick={() => setCustomImage("")}
-                  className="w-full py-1.5 font-mono text-[10px] text-white/25 uppercase tracking-wider border border-white/[0.07] rounded-lg hover:text-white/45 hover:border-white/[0.18] transition-all"
-                >
-                  Remove Image
-                </button>
+                <button onClick={() => setCustomImage("")} className={removeBtn}>Remove Image</button>
               )}
               {/* Recent images */}
               {recentImages.length > 0 && (
                 <div>
-                  <div className="mb-1.5 font-mono text-[9px] text-white/25 uppercase tracking-wider">Recent</div>
+                  <div className={`mb-1.5 ${subLabelSm}`}>Recent</div>
                   <div className="flex flex-wrap gap-1.5">
                     {recentImages.map((img, i) => (
-                      <button
-                        key={i}
-                        onClick={() => setCustomImage(img)}
-                        title={`Recent image ${i + 1}`}
+                      <button key={i} onClick={() => setCustomImage(img)} title={`Recent image ${i + 1}`}
                         className={`w-11 h-11 rounded overflow-hidden border transition-all duration-150 flex-shrink-0 ${
-                          customImage === img
-                            ? "border-blue-400/70 ring-1 ring-blue-400/30"
-                            : "border-white/[0.14] hover:border-white/35 opacity-70 hover:opacity-100"
+                          customImage === img ? "border-blue-400/70 ring-1 ring-blue-400/30"
+                          : d ? "border-white/[0.14] hover:border-white/35 opacity-70 hover:opacity-100"
+                          : "border-black/[0.14] hover:border-black/35 opacity-70 hover:opacity-100"
                         }`}
                       >
                         <img src={img} alt="" className="w-full h-full object-cover" />
@@ -737,40 +727,32 @@ export default function Page() {
         <div>
           <button className={sectionBtn} onClick={() => toggleSection("material")}>
             <span className={sectionTitle}>Material</span>
-            <span className="text-white/20 text-[10px]">{openSections.material ? "▾" : "▸"}</span>
+            <span className={chevronCls}>{openSections.material ? "▾" : "▸"}</span>
           </button>
           {openSections.material && (
             <div className="px-4 pb-4 space-y-4">
-              {/* Metal finish presets */}
               <div>
-                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Metal Finish</div>
+                <div className={`mb-2 ${subLabel}`}>Metal Finish</div>
                 <div className="flex flex-wrap gap-1.5">
                   {(["matte", "satin", "glossy", "chrome", "custom"] as MaterialPreset[]).map((p) => (
-                    <button key={p} onClick={() => applyMetalPreset(p)} className={`${pillBase} ${materialPreset === p ? pillActive : pillInactive}`}>
-                      {p}
-                    </button>
+                    <button key={p} onClick={() => applyMetalPreset(p)} className={`${pillBase} ${materialPreset === p ? pillActive : pillInactive}`}>{p}</button>
                   ))}
                 </div>
               </div>
-
-              {/* Non-custom: show label finish info */}
               {materialPreset !== "custom" && (
-                <div className="flex justify-between items-center py-1.5 px-3 rounded-lg bg-white/[0.03] border border-white/[0.07]">
-                  <span className="font-mono text-[10px] text-white/35 uppercase tracking-wider">Label</span>
-                  <span className="font-mono text-[10px] text-white/45">
+                <div className={infoCard}>
+                  <span className={`font-mono text-[10px] uppercase tracking-wider ${d ? "text-white/35" : "text-black/35"}`}>Label</span>
+                  <span className={`font-mono text-[10px] ${d ? "text-white/45" : "text-black/50"}`}>
                     {labelRoughness <= 0.1 ? "Glossy" : labelRoughness <= 0.4 ? "Satin" : "Matte"}
-                    <span className="text-white/20 ml-1.5">{labelRoughness.toFixed(2)}</span>
+                    <span className={`ml-1.5 ${d ? "text-white/20" : "text-black/25"}`}>{labelRoughness.toFixed(2)}</span>
                   </span>
                 </div>
               )}
-
-              {/* Custom: show all sliders */}
               {materialPreset === "custom" && (
                 <div className="space-y-3">
                   <SliderRow label="Label Roughness" value={labelRoughness} min={0} max={1} step={0.01} onChange={(v) => setLabelRoughness(v)} display={(v) => v.toFixed(2)} />
-
                   <div className="pt-1">
-                    <div className="mb-2 font-mono text-[9px] text-white/25 uppercase tracking-wider">Top Metal</div>
+                    <div className={`mb-2 ${subLabelSm}`}>Top Metal</div>
                     <div className="flex items-center gap-2 mb-2.5">
                       <input type="color" value={metalSettings.top.color} onChange={(e) => updateMetalSetting("top", "color", e.target.value)} className="w-7 h-7 rounded flex-shrink-0" />
                       <input type="text" value={metalSettings.top.color} onChange={(e) => updateMetalSetting("top", "color", e.target.value)} className={inputBase} />
@@ -782,9 +764,8 @@ export default function Page() {
                       <SliderRow label="Env Reflect" value={metalSettings.top.envMapIntensity} min={0} max={4} step={0.1} onChange={(v) => updateMetalSetting("top", "envMapIntensity", v)} display={(v) => v.toFixed(1)} />
                     </div>
                   </div>
-
                   <div className="pt-1">
-                    <div className="mb-2 font-mono text-[9px] text-white/25 uppercase tracking-wider">Bottom Metal</div>
+                    <div className={`mb-2 ${subLabelSm}`}>Bottom Metal</div>
                     <div className="flex items-center gap-2 mb-2.5">
                       <input type="color" value={metalSettings.bottom.color} onChange={(e) => updateMetalSetting("bottom", "color", e.target.value)} className="w-7 h-7 rounded flex-shrink-0" />
                       <input type="text" value={metalSettings.bottom.color} onChange={(e) => updateMetalSetting("bottom", "color", e.target.value)} className={inputBase} />
@@ -808,30 +789,21 @@ export default function Page() {
         <div>
           <button className={sectionBtn} onClick={() => toggleSection("lighting")}>
             <span className={sectionTitle}>Lighting</span>
-            <span className="text-white/20 text-[10px]">{openSections.lighting ? "▾" : "▸"}</span>
+            <span className={chevronCls}>{openSections.lighting ? "▾" : "▸"}</span>
           </button>
           {openSections.lighting && (
             <div className="px-4 pb-4 space-y-3">
               <SliderRow label="Brightness" value={lightingSettings.exposure} min={0} max={4} step={0.01} onChange={(v) => updateLightingSetting("exposure", v)} display={(v) => v.toFixed(2)} />
-
-              {/* Mode toggle */}
               <div>
-                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Mode</div>
+                <div className={`mb-2 ${subLabel}`}>Mode</div>
                 <div className="flex gap-1.5">
                   {([{ label: "Bar", enabled: true }, { label: "Studio", enabled: false }] as const).map(({ label, enabled }) => (
-                    <button
-                      key={label}
-                      onClick={() => setBar((p) => ({ ...p, enabled }))}
-                      className={`flex-1 py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${bar.enabled === enabled ? pillActive : pillInactive}`}
-                      style={{ borderRadius: "8px" }}
-                    >
+                    <button key={label} onClick={() => setBar((p) => ({ ...p, enabled }))} className={`flex-1 py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${bar.enabled === enabled ? pillActive : pillInactive}`} style={{ borderRadius: "8px" }}>
                       {label}
                     </button>
                   ))}
                 </div>
               </div>
-
-              {/* Bar light controls */}
               {bar.enabled && (
                 <div className="space-y-3">
                   <SliderRow label="Intensity" value={bar.intensity} min={0} max={20} step={0.05} onChange={(v) => setBar((p) => ({ ...p, intensity: v }))} display={(v) => v.toFixed(1)} />
@@ -840,17 +812,12 @@ export default function Page() {
                   <SliderRow label="Distance" value={bar.distance} min={0.5} max={15} step={0.1} onChange={(v) => setBar((p) => ({ ...p, distance: v }))} display={(v) => v.toFixed(1)} />
                 </div>
               )}
-
-              {/* Advanced toggle */}
-              <button onClick={() => setLightingAdvancedOpen((p) => !p)} className="flex items-center gap-1.5 text-white/25 hover:text-white/45 transition-colors pt-1">
+              <button onClick={() => setLightingAdvancedOpen((p) => !p)} className={`flex items-center gap-1.5 transition-colors pt-1 ${d ? "text-white/25 hover:text-white/45" : "text-black/30 hover:text-black/50"}`}>
                 <span className="font-mono text-[10px] uppercase tracking-wider">{lightingAdvancedOpen ? "▾" : "▸"} Advanced</span>
               </button>
-
               {lightingAdvancedOpen && (
                 <div className="space-y-3 pt-1">
-                  {!bar.enabled && (
-                    <SliderRow label="HDRI Intensity" value={lightingSettings.envIntensity} min={0} max={4} step={0.01} onChange={(v) => updateLightingSetting("envIntensity", v)} display={(v) => v.toFixed(2)} />
-                  )}
+                  {!bar.enabled && <SliderRow label="HDRI Intensity" value={lightingSettings.envIntensity} min={0} max={4} step={0.01} onChange={(v) => updateLightingSetting("envIntensity", v)} display={(v) => v.toFixed(2)} />}
                   {bar.enabled && (
                     <>
                       <SliderRow label="Bar Width" value={bar.width} min={0.1} max={12} step={0.1} onChange={(v) => setBar((p) => ({ ...p, width: v }))} display={(v) => v.toFixed(1)} />
@@ -865,21 +832,12 @@ export default function Page() {
                   <SliderRow label="Directional" value={lightingSettings.directionalIntensity} min={0} max={10} step={0.1} onChange={(v) => updateLightingSetting("directionalIntensity", v)} display={(v) => v.toFixed(1)} />
                   <SliderRow label="FOV" value={cameraFov} min={10} max={60} step={0.1} onChange={(v) => setCameraFov(v)} display={(v) => `${Math.round(v)}°`} />
                   <div>
-                    <div className="mb-1.5 font-mono text-[9px] text-white/25 uppercase tracking-wider">Light Direction (X · Y · Z)</div>
+                    <div className={`mb-1.5 ${subLabelSm}`}>Light Direction (X · Y · Z)</div>
                     <div className="grid grid-cols-3 gap-1.5">
                       {([0, 1, 2] as const).map((i) => (
-                        <input
-                          key={i}
-                          type="number"
-                          value={lightingSettings.directionalPosition[i]}
-                          onChange={(e) => {
-                            const pos = [...lightingSettings.directionalPosition] as [number, number, number];
-                            pos[i] = parseFloat(e.target.value) || 0;
-                            updateLightingSetting("directionalPosition", pos);
-                          }}
-                          placeholder={["X", "Y", "Z"][i]}
-                          className="bg-white/[0.05] border border-white/[0.1] rounded text-white/60 font-mono text-[11px] px-2 py-1 outline-none focus:border-white/25 transition-colors text-center w-full"
-                        />
+                        <input key={i} type="number" value={lightingSettings.directionalPosition[i]}
+                          onChange={(e) => { const pos = [...lightingSettings.directionalPosition] as [number, number, number]; pos[i] = parseFloat(e.target.value) || 0; updateLightingSetting("directionalPosition", pos); }}
+                          placeholder={["X", "Y", "Z"][i]} className={inputBase + " text-center"} />
                       ))}
                     </div>
                   </div>
@@ -895,22 +853,18 @@ export default function Page() {
         <div>
           <button className={sectionBtn} onClick={() => toggleSection("controls")}>
             <span className={sectionTitle}>Controls</span>
-            <span className="text-white/20 text-[10px]">{openSections.controls ? "▾" : "▸"}</span>
+            <span className={chevronCls}>{openSections.controls ? "▾" : "▸"}</span>
           </button>
           {openSections.controls && (
             <div className="px-4 pb-4 space-y-4">
-              {/* Rotation */}
               <div>
-                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Rotation</div>
-                <button
-                  onClick={toggleAutoRotation}
-                  disabled={isRecording}
+                <div className={`mb-2 ${subLabel}`}>Rotation</div>
+                <button onClick={toggleAutoRotation} disabled={isRecording}
                   className={`w-full py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${
-                    isRecording ? "opacity-40 cursor-not-allowed border-white/10 text-white/25" :
-                    isAutoRotating ? "border-red-400/50 bg-red-400/[0.1] text-red-300/80 hover:bg-red-400/[0.15]" : `${pillInactive}`
-                  }`}
-                  style={{ borderRadius: "8px" }}
-                >
+                    isRecording ? `opacity-40 cursor-not-allowed ${d ? "border-white/10 text-white/25" : "border-black/10 text-black/25"}`
+                    : isAutoRotating ? "border-red-400/50 bg-red-400/[0.1] text-red-400/80 hover:bg-red-400/[0.15]"
+                    : pillInactive
+                  }`} style={{ borderRadius: "8px" }}>
                   {isAutoRotating ? "Pause Rotation" : "Auto Rotate"}
                 </button>
                 {!isAutoRotating && !isRecording && (
@@ -921,18 +875,12 @@ export default function Page() {
                   </div>
                 )}
               </div>
-
-              {/* Export */}
               <div>
-                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Export</div>
+                <div className={`mb-2 ${subLabel}`}>Export</div>
                 <div className="flex flex-wrap gap-1.5">
-                  <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord} className={`${pillBase} ${isRecording || isPreparingRecord ? "opacity-40 cursor-not-allowed " + pillInactive : pillInactive}`}>
-                    PNG
-                  </button>
+                  <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord} className={`${pillBase} ${isRecording || isPreparingRecord ? "opacity-40 cursor-not-allowed " + pillInactive : pillInactive}`}>PNG</button>
                   {!isRecording && !isPreparingRecord ? (
-                    <button onClick={startVideoRecording} className={`${pillBase} ${pillInactive}`}>
-                      360° Video
-                    </button>
+                    <button onClick={startVideoRecording} className={`${pillBase} ${pillInactive}`}>360° Video</button>
                   ) : (
                     <button onClick={cancelRecording} className={`${pillBase} border-purple-400/50 bg-purple-400/[0.1] text-purple-300/80 hover:border-red-400/50 hover:bg-red-400/[0.1] hover:text-red-300/80`}>
                       {isPreparingRecord ? "Preparing…  ✕" : `${Math.round(recordingProgress)}%…  ✕`}
@@ -940,32 +888,35 @@ export default function Page() {
                   )}
                 </div>
               </div>
-
-              {/* Preset */}
               <div>
-                <div className="mb-2 font-mono text-[10px] text-white/25 uppercase tracking-wider">Preset</div>
+                <div className={`mb-2 ${subLabel}`}>Preset</div>
                 <div className="flex flex-wrap gap-1.5">
                   <button onClick={saveSettingsToJson} className={`${pillBase} ${pillInactive}`}>Save JSON</button>
                   <button onClick={onLoadPresetClick} className={`${pillBase} ${pillInactive}`}>Load JSON</button>
                 </div>
                 <input ref={presetInputRef} type="file" accept="application/json" onChange={onPresetFileSelected} className="hidden" />
               </div>
-
-              {/* Reset */}
-              <button
-                onClick={resetToDefault}
-                className="w-full py-2 font-mono text-[10px] uppercase tracking-wider border border-white/[0.08] text-white/20 hover:text-red-400/60 hover:border-red-400/25 transition-all duration-150"
-                style={{ borderRadius: "8px" }}
-              >
-                Reset to Default
-              </button>
+              <button onClick={resetToDefault} className={resetBtnCls} style={{ borderRadius: "8px" }}>Reset to Default</button>
             </div>
           )}
         </div>
 
-        {/* Bottom padding */}
         <div className="flex-1 min-h-8" />
       </div>
+
+      {/* ── Dark/Light toggle (bottom-left) ── */}
+      <button
+        onClick={() => setIsDarkMode((v) => !v)}
+        title={d ? "Switch to light mode" : "Switch to dark mode"}
+        className="fixed bottom-5 left-5 z-50 w-8 h-8 rounded-full flex items-center justify-center transition-all duration-200"
+        style={{ background: d ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)", border: d ? "1px solid rgba(255,255,255,0.15)" : "1px solid rgba(0,0,0,0.15)", color: d ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)" }}
+      >
+        {d ? (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        ) : (
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+        )}
+      </button>
     </div>
   );
 }
