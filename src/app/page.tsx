@@ -330,8 +330,10 @@ export default function Page() {
   // New state
   const [materialPreset, setMaterialPreset] = useState<MaterialPreset>("satin");
   const [isDragOver, setIsDragOver] = useState(false);
+  const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
   const [lightingAdvancedOpen, setLightingAdvancedOpen] = useState(false);
   const [openSections, setOpenSections] = useState({ can: true, image: true, material: true, lighting: true, controls: true });
+  const [recentImages, setRecentImages] = useState<string[]>([]);
 
   const [isPreparingRecord, setIsPreparingRecord] = useState(false);
 
@@ -343,12 +345,40 @@ export default function Page() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────
 
+  const addImage = useCallback((dataUrl: string) => {
+    setCustomImage(dataUrl);
+    setRecentImages(prev => {
+      const filtered = prev.filter(img => img !== dataUrl);
+      return [dataUrl, ...filtered].slice(0, 6);
+    });
+  }, []);
+
+  const readFileAsImage = useCallback((file: File) => {
+    if (!file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { if (ev.target?.result) addImage(ev.target.result as string); };
+    reader.readAsDataURL(file);
+  }, [addImage]);
+
+  // Paste support
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of Array.from(items)) {
+        if (item.type.startsWith("image/")) {
+          const file = item.getAsFile();
+          if (file) { readFileAsImage(file); break; }
+        }
+      }
+    };
+    document.addEventListener("paste", handlePaste);
+    return () => document.removeEventListener("paste", handlePaste);
+  }, [readFileAsImage]);
+
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => setCustomImage(ev.target?.result as string);
-    reader.readAsDataURL(file);
+    if (file) readFileAsImage(file);
   };
 
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
@@ -357,10 +387,16 @@ export default function Page() {
     e.preventDefault();
     setIsDragOver(false);
     const file = e.dataTransfer.files?.[0];
-    if (!file || !file.type.startsWith("image/")) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => setCustomImage(ev.target?.result as string);
-    reader.readAsDataURL(file);
+    if (file) readFileAsImage(file);
+  };
+
+  const handleCanvasDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsCanvasDragOver(true); };
+  const handleCanvasDragLeave = () => setIsCanvasDragOver(false);
+  const handleCanvasDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsCanvasDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) readFileAsImage(file);
   };
 
   const updateLightingSetting = (key: keyof LightingSettings, value: any) => {
@@ -554,7 +590,17 @@ export default function Page() {
   return (
     <div className="h-screen bg-black flex overflow-hidden">
       {/* ── 3D Canvas ── */}
-      <div className="flex-1 relative bg-black">
+      <div
+        className="flex-1 relative bg-black"
+        onDragOver={handleCanvasDragOver}
+        onDragLeave={handleCanvasDragLeave}
+        onDrop={handleCanvasDrop}
+      >
+        {isCanvasDragOver && (
+          <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center" style={{ background: "rgba(74,158,255,0.06)", border: "2px dashed rgba(74,158,255,0.35)" }}>
+            <span className="font-mono text-[12px] text-blue-300/60 uppercase tracking-widest">Drop image</span>
+          </div>
+        )}
         <Canvas
           camera={{ position: [0, 0, 4], fov: 25 }}
           shadows
@@ -653,10 +699,32 @@ export default function Page() {
               {customImage && (
                 <button
                   onClick={() => setCustomImage("")}
-                  className="w-full py-1.5 font-mono text-[10px] text-white/25 uppercase tracking-wider border border-white/[0.07] rounded-lg hover:text-white/45 hover:border-white/18 transition-all"
+                  className="w-full py-1.5 font-mono text-[10px] text-white/25 uppercase tracking-wider border border-white/[0.07] rounded-lg hover:text-white/45 hover:border-white/[0.18] transition-all"
                 >
                   Remove Image
                 </button>
+              )}
+              {/* Recent images */}
+              {recentImages.length > 0 && (
+                <div>
+                  <div className="mb-1.5 font-mono text-[9px] text-white/25 uppercase tracking-wider">Recent</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {recentImages.map((img, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setCustomImage(img)}
+                        title={`Recent image ${i + 1}`}
+                        className={`w-11 h-11 rounded overflow-hidden border transition-all duration-150 flex-shrink-0 ${
+                          customImage === img
+                            ? "border-blue-400/70 ring-1 ring-blue-400/30"
+                            : "border-white/[0.14] hover:border-white/35 opacity-70 hover:opacity-100"
+                        }`}
+                      >
+                        <img src={img} alt="" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
             </div>
