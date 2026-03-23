@@ -74,7 +74,120 @@ const canSizeSpecs: Record<CanSize, CanSizeSpec> = {
   },
 };
 
-// ─── 3D Components (unchanged) ────────────────────────────────────────────────
+// ─── Fit-mode texture hook ─────────────────────────────────────────────────────
+
+// 8× 스케일로 캔버스 텍스처 해상도를 충분히 확보
+const LABEL_SCALE = 8;
+const LABEL_DIMS: Record<CanSize, { w: number; h: number }> = {
+  "355ml": { w: 414 * LABEL_SCALE, h: 220 * LABEL_SCALE },
+  "475ml": { w: 414 * LABEL_SCALE, h: 280 * LABEL_SCALE },
+};
+
+function useFitTexture(
+  customSrc: string | undefined,
+  defaultSrc: string,
+  canSize: CanSize,
+  imageScale: number,
+  imageOffsetX: number,
+  imageOffsetY: number,
+  bgColor: string,
+): THREE.Texture {
+  const { w: labelW, h: labelH } = LABEL_DIMS[canSize];
+  const [canvasTexture, setCanvasTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (!customSrc) {
+      setCanvasTexture(prev => { prev?.dispose(); return null; });
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = labelW;
+      canvas.height = labelH;
+      const ctx = canvas.getContext("2d")!;
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, labelW, labelH);
+      const scale = Math.min(labelW / img.naturalWidth, labelH / img.naturalHeight) * imageScale;
+      const drawW = img.naturalWidth * scale;
+      const drawH = img.naturalHeight * scale;
+      const drawX = (labelW - drawW) / 2 + imageOffsetX * labelW;
+      const drawY = (labelH - drawH) / 2 + imageOffsetY * labelH;
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.flipY = false;
+      // 비-POT 캔버스에서 mipmap 아티팩트 방지 — LinearFilter만 사용
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      setCanvasTexture(prev => { prev?.dispose(); return tex; });
+    };
+    img.src = customSrc;
+    return () => { cancelled = true; };
+  }, [customSrc, labelW, labelH, imageScale, imageOffsetX, imageOffsetY, bgColor]);
+
+  const fallback = useTexture(customSrc || defaultSrc);
+  fallback.flipY = false;
+  return (customSrc && canvasTexture) ? canvasTexture : fallback;
+}
+
+// ─── Sticker texture hook (transparent bg, preserves alpha) ───────────────────
+
+function useStickerTexture(
+  stickerSrc: string | undefined,
+  canSize: CanSize,
+  stickerScale: number,
+  stickerOffsetX: number,
+  stickerOffsetY: number,
+  shadowIntensity: number,
+): THREE.Texture | null {
+  const { w: labelW, h: labelH } = LABEL_DIMS[canSize];
+  const [canvasTexture, setCanvasTexture] = useState<THREE.Texture | null>(null);
+
+  useEffect(() => {
+    if (!stickerSrc) {
+      setCanvasTexture(prev => { prev?.dispose(); return null; });
+      return;
+    }
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (cancelled) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = labelW;
+      canvas.height = labelH;
+      const ctx = canvas.getContext("2d")!;
+      ctx.clearRect(0, 0, labelW, labelH);
+      const scale = Math.min(labelW / img.naturalWidth, labelH / img.naturalHeight) * stickerScale;
+      const drawW = img.naturalWidth * scale;
+      const drawH = img.naturalHeight * scale;
+      const drawX = (labelW - drawW) / 2 + stickerOffsetX * labelW;
+      const drawY = (labelH - drawH) / 2 + stickerOffsetY * labelH;
+      if (shadowIntensity > 0) {
+        ctx.shadowColor = `rgba(0,0,0,${Math.min(shadowIntensity * 0.75, 0.85)})`;
+        ctx.shadowBlur = shadowIntensity * labelW * 0.028;
+        ctx.shadowOffsetX = shadowIntensity * labelW * 0.006;
+        ctx.shadowOffsetY = shadowIntensity * labelH * 0.01;
+      }
+      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      ctx.shadowColor = "transparent";
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.flipY = false;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      setCanvasTexture(prev => { prev?.dispose(); return tex; });
+    };
+    img.src = stickerSrc;
+    return () => { cancelled = true; };
+  }, [stickerSrc, labelW, labelH, stickerScale, stickerOffsetX, stickerOffsetY, shadowIntensity]);
+
+  return canvasTexture;
+}
+
+// ─── 3D Components ─────────────────────────────────────────────────────────────
 
 function EditableSodaCan({
   customTexture,
@@ -85,6 +198,19 @@ function EditableSodaCan({
   canSize,
   labelRoughness,
   metalSettings,
+  imageScale,
+  imageOffsetX,
+  imageOffsetY,
+  bgColor,
+  stickerImage,
+  stickerScale,
+  stickerOffsetX,
+  stickerOffsetY,
+  stickerRoughness,
+  stickerMetalness,
+  stickerShadowIntensity,
+  rotationSpeed,
+  rotationResetRef,
 }: {
   customTexture?: string;
   rotation: [number, number, number];
@@ -94,22 +220,39 @@ function EditableSodaCan({
   canSize: CanSize;
   labelRoughness: number;
   metalSettings: MetalSettings;
+  imageScale: number;
+  imageOffsetX: number;
+  imageOffsetY: number;
+  bgColor: string;
+  stickerImage?: string;
+  stickerScale: number;
+  stickerOffsetX: number;
+  stickerOffsetY: number;
+  stickerRoughness: number;
+  stickerMetalness: number;
+  stickerShadowIntensity: number;
+  rotationSpeed: number;
+  rotationResetRef: React.MutableRefObject<boolean>;
 }) {
   const { nodes } = useGLTF("/Soda-can.gltf");
 
   const defaultBySize =
     canSize === "475ml" ? `${BASE}/labels/475d.png` : `${BASE}/labels/355d.png`;
-  const texture = useTexture(customTexture || defaultBySize);
-  texture.flipY = false;
+  const texture = useFitTexture(customTexture, defaultBySize, canSize, imageScale, imageOffsetX, imageOffsetY, bgColor);
+  const stickerTexture = useStickerTexture(stickerImage, canSize, stickerScale, stickerOffsetX, stickerOffsetY, stickerShadowIntensity);
 
   const groupRef = useRef<THREE.Group>(null);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
+    if (rotationResetRef.current) {
+      groupRef.current.rotation.y = 0;
+      rotationResetRef.current = false;
+    }
     if (isRecording) {
       groupRef.current.rotation.y = (recordingProgress / 100) * Math.PI * 2;
     } else if (isAutoRotating) {
-      groupRef.current.rotation.y += delta * 0.5;
+      groupRef.current.rotation.y += delta * 0.5 * rotationSpeed;
     } else {
       groupRef.current.rotation.set(...rotation);
     }
@@ -124,29 +267,28 @@ function EditableSodaCan({
   const bodyHeight = bodyMaxY - bodyMinY;
 
   const uniformScale = 2.0;
-  const sy = canSize === "475ml" ? 3.0 / 2.5 : 1.0;
+  // sy: 475ml body는 label 비율(280/220)로만 늘림 — 림/뚜껑은 스케일 없이 위치만 이동
+  const sy = canSize === "475ml" ? 280 / 220 : 1.0;
 
-  const seamTopLocal = sy > 1 ? bodyHeight * 0.003 : 0;
-  const seamBottomLocal = sy > 1 ? bodyHeight * 0.007 : 0;
-  const offsetCoreLocal = (bodyHeight / 2) * (sy - 1);
-  const topOffsetLocal = offsetCoreLocal - seamTopLocal;
-  const bottomOffsetLocal = offsetCoreLocal - seamBottomLocal;
+  // 정확한 오프셋: bodyMaxY / |bodyMinY| 직접 사용 (비대칭 지오메트리 대응)
+  const SEAM = bodyHeight * 0.0001;
+  const topOffsetLocal = bodyMaxY * (sy - 1);
+  const bottomOffsetLocal = (-bodyMinY) * (sy - 1);
 
-  const newMinWorld = bodyMinY * sy * uniformScale;
-  const newMaxWorld = bodyMaxY * sy * uniformScale;
-  const seamTopWorld = seamTopLocal * sy * uniformScale;
-  const seamBottomWorld = seamBottomLocal * sy * uniformScale;
+  const bodyMinWorld = bodyMinY * sy * uniformScale;
+  const bodyMaxWorld = bodyMaxY * sy * uniformScale;
+  const seamWorld = SEAM * uniformScale;
 
   const planeKeepYGreaterEq = (y: number) =>
     new THREE.Plane(new THREE.Vector3(0, 1, 0), -y);
   const planeKeepYLessEq = (y: number) =>
     new THREE.Plane(new THREE.Vector3(0, -1, 0), y);
 
-  const topPlane = planeKeepYGreaterEq(newMaxWorld - seamTopWorld);
-  const bottomPlane = planeKeepYLessEq(newMinWorld + seamBottomWorld);
+  const topPlane = planeKeepYGreaterEq(bodyMaxWorld - seamWorld);
+  const bottomPlane = planeKeepYLessEq(bodyMinWorld + seamWorld);
   const bodyPlanes = [
-    planeKeepYGreaterEq(newMinWorld - seamBottomWorld),
-    planeKeepYLessEq(newMaxWorld + seamTopWorld),
+    planeKeepYGreaterEq(bodyMinWorld - seamWorld),
+    planeKeepYLessEq(bodyMaxWorld + seamWorld),
   ];
 
   const colorWithBrightness = (hex: string, b: number) => {
@@ -191,8 +333,13 @@ function EditableSodaCan({
       <mesh castShadow receiveShadow geometry={metalGeo} material={bodyMetalMat} scale={[1, sy, 1]} />
       <mesh castShadow={metalSettings.bottom.castShadow} receiveShadow={metalSettings.bottom.receiveShadow} geometry={metalGeo} material={bottomMetalMat} position-y={-bottomOffsetLocal} />
       <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
-        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} transparent polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
       </mesh>
+      {stickerTexture && (
+        <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
+          <meshStandardMaterial roughness={stickerRoughness} metalness={stickerMetalness} map={stickerTexture} transparent alphaTest={0.01} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
+        </mesh>
+      )}
       <mesh castShadow receiveShadow geometry={(nodes.Tab as THREE.Mesh).geometry} position-y={topOffsetLocal}>
         <meshStandardMaterial roughness={metalSettings.top.roughness} metalness={1} color={colorWithBrightness(metalSettings.top.color, metalSettings.top.brightness)} emissive={"#ffffff"} emissiveIntensity={metalSettings.top.emissiveIntensity} envMapIntensity={metalSettings.top.envMapIntensity} />
       </mesh>
@@ -272,6 +419,111 @@ function CustomOrbitControls({ controlsRef }: { controlsRef: React.RefObject<any
   );
 }
 
+// ─── Canvas Exporter ──────────────────────────────────────────────────────────
+// Uses the main canvas (same pipeline as what the user sees) to guarantee
+// identical tone mapping, lighting, and color space. We temporarily resize
+// the canvas buffer to 2000×2000 without touching CSS (no visible flash).
+
+function CanvasExporter({ captureRef, canSize }: {
+  captureRef: React.MutableRefObject<(() => void) | null>;
+  canSize: string;
+}) {
+  const { gl, scene, camera } = useThree();
+
+  useEffect(() => {
+    captureRef.current = () => {
+      const exportSize = 2000;
+
+      // ── Save state ──────────────────────────────────────────────────────────
+      const savedPixelRatio = gl.getPixelRatio();
+      const savedCssW = gl.domElement.width / savedPixelRatio;
+      const savedCssH = gl.domElement.height / savedPixelRatio;
+
+      const persp = camera as THREE.PerspectiveCamera;
+      const savedFov = persp.fov;
+      const savedAspect = persp.aspect;
+      const savedPos = persp.position.clone();
+      const savedQuat = persp.quaternion.clone();
+
+      // ── Set up export camera (front-facing, square, tight FOV) ─────────────
+      const exportFov = 20;
+      const exportZ = (4 * Math.tan(THREE.MathUtils.degToRad(25 / 2))) /
+                          Math.tan(THREE.MathUtils.degToRad(exportFov / 2));
+      persp.aspect = 1;
+      persp.fov = exportFov;
+      persp.position.set(0, 0, exportZ);
+      persp.lookAt(0, 0, 0);
+      persp.updateProjectionMatrix();
+
+      // ── Resize buffer only — false = don't touch CSS style ─────────────────
+      gl.setPixelRatio(1);
+      gl.setSize(exportSize, exportSize, false);
+
+      // ── Render via the exact same pipeline the user sees ───────────────────
+      gl.render(scene, camera);
+      const dataUrl = gl.domElement.toDataURL("image/png");
+
+      // ── Restore immediately ─────────────────────────────────────────────────
+      gl.setPixelRatio(savedPixelRatio);
+      gl.setSize(savedCssW, savedCssH, false);
+      persp.fov = savedFov;
+      persp.aspect = savedAspect;
+      persp.position.copy(savedPos);
+      persp.quaternion.copy(savedQuat);
+      persp.updateProjectionMatrix();
+
+      // ── Crop + scale async (after restore so UI is unblocked) ──────────────
+      const img = new Image();
+      img.onload = () => {
+        const tempCanvas = document.createElement("canvas");
+        tempCanvas.width = exportSize;
+        tempCanvas.height = exportSize;
+        const ctx = tempCanvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0);
+        const pixels = ctx.getImageData(0, 0, exportSize, exportSize).data;
+
+        let minX = exportSize, maxX = 0, minY = exportSize, maxY = 0;
+        for (let y = 0; y < exportSize; y++) {
+          for (let x = 0; x < exportSize; x++) {
+            if (pixels[(y * exportSize + x) * 4 + 3] > 10) {
+              if (x < minX) minX = x;
+              if (x > maxX) maxX = x;
+              if (y < minY) minY = y;
+              if (y > maxY) maxY = y;
+            }
+          }
+        }
+        if (maxX <= minX || maxY <= minY) return;
+
+        const contentW = maxX - minX + 1;
+        const contentH = maxY - minY + 1;
+        const pad = Math.round(Math.max(contentW, contentH) * 0.07);
+        const croppedW = contentW + pad * 2;
+        const croppedH = contentH + pad * 2;
+        const targetH = 1200;
+        const targetW = Math.round(croppedW * (targetH / croppedH));
+
+        const outCanvas = document.createElement("canvas");
+        outCanvas.width = targetW;
+        outCanvas.height = targetH;
+        outCanvas.getContext("2d")!.drawImage(
+          tempCanvas, minX - pad, minY - pad, croppedW, croppedH,
+          0, 0, targetW, targetH
+        );
+
+        const a = document.createElement("a");
+        a.download = `can-${canSize}.png`;
+        a.href = outCanvas.toDataURL("image/png");
+        a.click();
+      };
+      img.src = dataUrl;
+    };
+    return () => { captureRef.current = null; };
+  }, [gl, scene, camera, canSize, captureRef]);
+
+  return null;
+}
+
 // ─── UI Helper ────────────────────────────────────────────────────────────────
 
 function SliderRow({ label, value, min, max, step, onChange, display }: {
@@ -332,9 +584,22 @@ export default function Page() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
   const [lightingAdvancedOpen, setLightingAdvancedOpen] = useState(false);
-  const [openSections, setOpenSections] = useState({ can: true, image: true, material: true, lighting: true, controls: true });
+  const [openSections, setOpenSections] = useState({ can: true, image: true, sticker: true, material: true, lighting: true, controls: true });
+  const [stickerImage, setStickerImage] = useState<string>("");
+  const [stickerScale, setStickerScale] = useState(1.0);
+  const [stickerOffsetX, setStickerOffsetX] = useState(0);
+  const [stickerOffsetY, setStickerOffsetY] = useState(0);
+  const [stickerRoughness, setStickerRoughness] = useState(0.8);
+  const [stickerMetalness, setStickerMetalness] = useState(0.0);
+  const [stickerShadowIntensity, setStickerShadowIntensity] = useState(0.3);
+  const [rotationSpeed, setRotationSpeed] = useState(1.0);
+  const [pasteTarget, setPasteTarget] = useState<"label" | "sticker">("label");
   const [recentImages, setRecentImages] = useState<string[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [imageScale, setImageScale] = useState(1.0);
+  const [imageOffsetX, setImageOffsetX] = useState(0);
+  const [imageOffsetY, setImageOffsetY] = useState(0);
+  const [bgColor, setBgColor] = useState("#c6c6c8");
 
   const [isPreparingRecord, setIsPreparingRecord] = useState(false);
 
@@ -343,8 +608,11 @@ export default function Page() {
   }, [isDarkMode]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const stickerInputRef = useRef<HTMLInputElement>(null);
   const presetInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<any>(null);
+  const captureRef = useRef<(() => void) | null>(null);
+  const rotationResetRef = useRef(false);
   const recordingAbortRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
@@ -365,7 +633,7 @@ export default function Page() {
     reader.readAsDataURL(file);
   }, [addImage]);
 
-  // Paste support
+  // Paste support — routes to label or sticker based on pasteTarget
   useEffect(() => {
     const handlePaste = (e: ClipboardEvent) => {
       const items = e.clipboardData?.items;
@@ -373,13 +641,23 @@ export default function Page() {
       for (const item of Array.from(items)) {
         if (item.type.startsWith("image/")) {
           const file = item.getAsFile();
-          if (file) { readFileAsImage(file); break; }
+          if (!file) break;
+          if (pasteTarget === "sticker") {
+            const reader = new FileReader();
+            reader.onload = (ev) => { if (ev.target?.result) setStickerImage(ev.target.result as string); };
+            reader.readAsDataURL(file);
+          } else {
+            readFileAsImage(file);
+          }
+          break;
         }
       }
     };
     document.addEventListener("paste", handlePaste);
     return () => document.removeEventListener("paste", handlePaste);
-  }, [readFileAsImage]);
+  }, [readFileAsImage, pasteTarget]);
+
+  const handleResetView = () => { rotationResetRef.current = true; setRotation([0, 0, 0]); };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -504,13 +782,15 @@ export default function Page() {
     reader.readAsText(file);
   };
 
-  const saveToPNG = () => {
-    const src = document.querySelector("canvas") as HTMLCanvasElement | null;
-    if (!src) return;
-    const a = document.createElement("a");
-    a.download = `can-${canSize}.png`;
-    a.href = src.toDataURL("image/png");
-    a.click();
+  const saveToPNG = () => { captureRef.current?.(); };
+
+  const handleStickerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { if (ev.target?.result) setStickerImage(ev.target.result as string); };
+    reader.readAsDataURL(file);
+    e.target.value = "";
   };
 
   const cancelRecording = useCallback(() => {
@@ -626,10 +906,53 @@ export default function Page() {
           <SceneExposure exposure={lightingSettings.exposure} />
           <CameraPerspective fov={cameraFov} />
           <CustomLighting settings={lightingSettings} />
-          <EditableSodaCan customTexture={appliedTexture} rotation={rotation} isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress} canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings} />
+          <EditableSodaCan customTexture={appliedTexture} rotation={rotation} isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress} canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings} imageScale={imageScale} imageOffsetX={imageOffsetX} imageOffsetY={imageOffsetY} bgColor={bgColor} stickerImage={stickerImage || undefined} stickerScale={stickerScale} stickerOffsetX={stickerOffsetX} stickerOffsetY={stickerOffsetY} stickerRoughness={stickerRoughness} stickerMetalness={stickerMetalness} stickerShadowIntensity={stickerShadowIntensity} rotationSpeed={rotationSpeed} rotationResetRef={rotationResetRef} />
           <CustomOrbitControls controlsRef={controlsRef} />
           <RotatingEnvironment barRotation={bar.rotation} otherRotation={lightingSettings.otherRotation} intensity={lightingSettings.envIntensity} bar={bar} />
+          <CanvasExporter captureRef={captureRef} canSize={canSize} />
         </Canvas>
+
+        {/* ── Bottom Center HUD ── */}
+        <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 rounded-2xl"
+          style={{ background: d ? "rgba(12,12,12,0.82)" : "rgba(238,238,238,0.90)", border: d ? "1px solid rgba(255,255,255,0.13)" : "1px solid rgba(0,0,0,0.13)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
+          {/* Reset view */}
+          <button onClick={handleResetView} title="Reset to front" disabled={isRecording}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center font-mono text-[13px] transition-all duration-150 ${isRecording ? "opacity-30 cursor-not-allowed" : ""}`}
+            style={{ color: d ? "rgba(255,255,255,0.45)" : "rgba(0,0,0,0.45)" }}>⟳</button>
+          {/* Play / Pause */}
+          <button onClick={() => setIsAutoRotating(v => !v)} disabled={isRecording}
+            className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording ? "opacity-30 cursor-not-allowed" : ""} ${isAutoRotating && !isRecording ? "border-blue-400/50 bg-blue-400/[0.14] text-blue-300/80" : ""}`}
+            style={!isAutoRotating && !isRecording ? { border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" } : {}}>
+            {isAutoRotating ? "⏸" : "▶"}
+          </button>
+          {/* Speed slider */}
+          <div className="flex items-center gap-1.5 px-1">
+            <input type="range" min={0.2} max={3} step={0.1} value={rotationSpeed} onChange={e => setRotationSpeed(parseFloat(e.target.value))} className="w-16 h-0.5 accent-blue-400" />
+            <span className="font-mono text-[9px] w-7 tabular-nums" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)" }}>{rotationSpeed.toFixed(1)}×</span>
+          </div>
+          {/* Divider */}
+          <div className="w-px h-5 mx-0.5" style={{ background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }} />
+          {/* PNG export */}
+          <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord}
+            className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording || isPreparingRecord ? "opacity-30 cursor-not-allowed" : ""}`}
+            style={{ border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
+            PNG
+          </button>
+          {/* Video recording */}
+          {!isRecording && !isPreparingRecord ? (
+            <button onClick={startVideoRecording}
+              className="px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150"
+              style={{ border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" }}>
+              360°
+            </button>
+          ) : (
+            <button onClick={cancelRecording}
+              className="px-2.5 py-1.5 rounded-lg font-mono text-[10px] tracking-wider border transition-all duration-150"
+              style={{ border: "1px solid rgba(168,85,247,0.45)", background: "rgba(168,85,247,0.1)", color: "rgba(192,132,252,0.85)" }}>
+              {isPreparingRecord ? "…  ✕" : `${Math.round(recordingProgress)}%  ✕`}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* ── Right Sidebar ── */}
@@ -669,8 +992,11 @@ export default function Page() {
 
         {/* ── IMAGE ── */}
         <div>
-          <button className={sectionBtn} onClick={() => toggleSection("image")}>
-            <span className={sectionTitle}>Image</span>
+          <button className={sectionBtn} onClick={() => { toggleSection("image"); setPasteTarget("label"); }}>
+            <div className="flex items-center gap-2">
+              <span className={sectionTitle}>Image</span>
+              {pasteTarget === "label" && <span className="font-mono text-[8px] px-1.5 py-0.5 rounded" style={{ background: d ? "rgba(74,158,255,0.15)" : "rgba(74,158,255,0.1)", color: "rgba(74,158,255,0.8)", border: "1px solid rgba(74,158,255,0.22)" }}>⌘V</span>}
+            </div>
             <span className={chevronCls}>{openSections.image ? "▾" : "▸"}</span>
           </button>
           {openSections.image && (
@@ -695,7 +1021,16 @@ export default function Page() {
                 <span className={`font-mono text-[10px] ${d ? "text-white/45" : "text-black/50"}`}>{canSizeSpecs[canSize].labelSizeText}</span>
               </div>
               {customImage && (
-                <button onClick={() => setCustomImage("")} className={removeBtn}>Remove Image</button>
+                <>
+                  <SliderRow label="Scale" value={imageScale} min={0.1} max={1.5} step={0.01} onChange={setImageScale} display={v => `${Math.round(v * 100)}%`} />
+                  <SliderRow label="Position X" value={imageOffsetX} min={-0.5} max={0.5} step={0.01} onChange={setImageOffsetX} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <SliderRow label="Position Y" value={imageOffsetY} min={-0.5} max={0.5} step={0.01} onChange={setImageOffsetY} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <div className="flex items-center justify-between">
+                    <span className={subLabelSm}>BG Color</span>
+                    <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} className="w-8 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
+                  </div>
+                  <button onClick={() => { setCustomImage(""); setImageScale(1.0); setImageOffsetX(0); setImageOffsetY(0); }} className={removeBtn}>Remove Image</button>
+                </>
               )}
               {/* Recent images */}
               {recentImages.length > 0 && (
@@ -717,6 +1052,47 @@ export default function Page() {
                 </div>
               )}
               <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+            </div>
+          )}
+        </div>
+
+        {divider}
+
+        {/* ── STICKER ── */}
+        <div>
+          <button className={sectionBtn} onClick={() => { toggleSection("sticker"); setPasteTarget("sticker"); }}>
+            <div className="flex items-center gap-2">
+              <span className={sectionTitle}>Sticker</span>
+              {pasteTarget === "sticker" && <span className="font-mono text-[8px] px-1.5 py-0.5 rounded" style={{ background: d ? "rgba(168,85,247,0.18)" : "rgba(168,85,247,0.12)", color: "rgba(168,85,247,0.8)", border: "1px solid rgba(168,85,247,0.25)" }}>⌘V</span>}
+            </div>
+            <span className={chevronCls}>{openSections.sticker ? "▾" : "▸"}</span>
+          </button>
+          {openSections.sticker && (
+            <div className="px-4 pb-4 space-y-2">
+              <div
+                onClick={() => stickerInputRef.current?.click()}
+                className={`flex flex-col items-center justify-center gap-1.5 py-6 rounded-lg border cursor-pointer transition-all duration-150 ${
+                  stickerImage ? "border-purple-400/40 bg-purple-400/[0.05]" : dropZoneIdle
+                }`}
+              >
+                <div className={`font-mono text-[11px] uppercase tracking-wider ${stickerImage ? "text-purple-400/70" : d ? "text-white/35" : "text-black/40"}`}>
+                  {stickerImage ? "✓  Sticker loaded" : "Click to upload sticker"}
+                </div>
+                <div className={`font-mono text-[9px] uppercase ${d ? "text-white/20" : "text-black/25"}`}>PNG · ⌘V to paste</div>
+              </div>
+              {stickerImage && (
+                <>
+                  <SliderRow label="Scale" value={stickerScale} min={0.05} max={1.5} step={0.01} onChange={setStickerScale} display={v => `${Math.round(v * 100)}%`} />
+                  <SliderRow label="Position X" value={stickerOffsetX} min={-0.5} max={0.5} step={0.01} onChange={setStickerOffsetX} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <SliderRow label="Position Y" value={stickerOffsetY} min={-0.5} max={0.5} step={0.01} onChange={setStickerOffsetY} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <SliderRow label="Shadow" value={stickerShadowIntensity} min={0} max={1} step={0.01} onChange={setStickerShadowIntensity} display={v => `${Math.round(v * 100)}%`} />
+                  <div className={`pt-1 ${subLabelSm}`}>Material</div>
+                  <SliderRow label="Roughness" value={stickerRoughness} min={0} max={1} step={0.01} onChange={setStickerRoughness} display={v => v.toFixed(2)} />
+                  <SliderRow label="Metalness" value={stickerMetalness} min={0} max={1} step={0.01} onChange={setStickerMetalness} display={v => v.toFixed(2)} />
+                  <button onClick={() => { setStickerImage(""); setStickerScale(1.0); setStickerOffsetX(0); setStickerOffsetY(0); setStickerShadowIntensity(0.3); }} className={removeBtn}>Remove Sticker</button>
+                </>
+              )}
+              <input ref={stickerInputRef} type="file" accept="image/*" onChange={handleStickerUpload} className="hidden" />
             </div>
           )}
         </div>
@@ -857,37 +1233,16 @@ export default function Page() {
           </button>
           {openSections.controls && (
             <div className="px-4 pb-4 space-y-4">
-              <div>
-                <div className={`mb-2 ${subLabel}`}>Rotation</div>
-                <button onClick={toggleAutoRotation} disabled={isRecording}
-                  className={`w-full py-2 font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${
-                    isRecording ? `opacity-40 cursor-not-allowed ${d ? "border-white/10 text-white/25" : "border-black/10 text-black/25"}`
-                    : isAutoRotating ? "border-red-400/50 bg-red-400/[0.1] text-red-400/80 hover:bg-red-400/[0.15]"
-                    : pillInactive
-                  }`} style={{ borderRadius: "8px" }}>
-                  {isAutoRotating ? "Pause Rotation" : "Auto Rotate"}
-                </button>
-                {!isAutoRotating && !isRecording && (
-                  <div className="mt-3 space-y-2.5">
+              {!isAutoRotating && (
+                <div>
+                  <div className={`mb-2 ${subLabel}`}>Manual Rotation</div>
+                  <div className="space-y-2.5">
                     <SliderRow label="Y (Horiz)" value={rotation[1]} min={0} max={Math.PI * 2} step={0.01} onChange={(v) => setRotation([rotation[0], v, rotation[2]])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
                     <SliderRow label="X (Vert)" value={rotation[0]} min={-Math.PI / 2} max={Math.PI / 2} step={0.01} onChange={(v) => setRotation([v, rotation[1], rotation[2]])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
                     <SliderRow label="Z (Roll)" value={rotation[2]} min={-Math.PI} max={Math.PI} step={0.01} onChange={(v) => setRotation([rotation[0], rotation[1], v])} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
                   </div>
-                )}
-              </div>
-              <div>
-                <div className={`mb-2 ${subLabel}`}>Export</div>
-                <div className="flex flex-wrap gap-1.5">
-                  <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord} className={`${pillBase} ${isRecording || isPreparingRecord ? "opacity-40 cursor-not-allowed " + pillInactive : pillInactive}`}>PNG</button>
-                  {!isRecording && !isPreparingRecord ? (
-                    <button onClick={startVideoRecording} className={`${pillBase} ${pillInactive}`}>360° Video</button>
-                  ) : (
-                    <button onClick={cancelRecording} className={`${pillBase} border-purple-400/50 bg-purple-400/[0.1] text-purple-300/80 hover:border-red-400/50 hover:bg-red-400/[0.1] hover:text-red-300/80`}>
-                      {isPreparingRecord ? "Preparing…  ✕" : `${Math.round(recordingProgress)}%…  ✕`}
-                    </button>
-                  )}
                 </div>
-              </div>
+              )}
               <div>
                 <div className={`mb-2 ${subLabel}`}>Preset</div>
                 <div className="flex flex-wrap gap-1.5">
