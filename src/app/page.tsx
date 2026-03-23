@@ -91,6 +91,8 @@ function useFitTexture(
   imageOffsetX: number,
   imageOffsetY: number,
   bgColor: string,
+  imageRotation: number,
+  imageInvert: boolean,
 ): THREE.Texture {
   const { w: labelW, h: labelH } = LABEL_DIMS[canSize];
   const [canvasTexture, setCanvasTexture] = useState<THREE.Texture | null>(null);
@@ -115,10 +117,19 @@ function useFitTexture(
       const drawH = img.naturalHeight * scale;
       const drawX = (labelW - drawW) / 2 + imageOffsetX * labelW;
       const drawY = (labelH - drawH) / 2 + imageOffsetY * labelH;
-      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      if (imageInvert) ctx.filter = "invert(1)";
+      if (imageRotation !== 0) {
+        ctx.save();
+        ctx.translate(drawX + drawW / 2, drawY + drawH / 2);
+        ctx.rotate((imageRotation * Math.PI) / 180);
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      }
+      ctx.filter = "none";
       const tex = new THREE.CanvasTexture(canvas);
       tex.flipY = false;
-      // 비-POT 캔버스에서 mipmap 아티팩트 방지 — LinearFilter만 사용
       tex.minFilter = THREE.LinearFilter;
       tex.magFilter = THREE.LinearFilter;
       tex.generateMipmaps = false;
@@ -126,7 +137,7 @@ function useFitTexture(
     };
     img.src = customSrc;
     return () => { cancelled = true; };
-  }, [customSrc, labelW, labelH, imageScale, imageOffsetX, imageOffsetY, bgColor]);
+  }, [customSrc, labelW, labelH, imageScale, imageOffsetX, imageOffsetY, bgColor, imageRotation, imageInvert]);
 
   const fallback = useTexture(customSrc || defaultSrc);
   fallback.flipY = false;
@@ -142,6 +153,7 @@ function useStickerTexture(
   stickerOffsetX: number,
   stickerOffsetY: number,
   shadowIntensity: number,
+  stickerRotation: number,
 ): THREE.Texture | null {
   const { w: labelW, h: labelH } = LABEL_DIMS[canSize];
   const [canvasTexture, setCanvasTexture] = useState<THREE.Texture | null>(null);
@@ -171,7 +183,15 @@ function useStickerTexture(
         ctx.shadowOffsetX = shadowIntensity * labelW * 0.006;
         ctx.shadowOffsetY = shadowIntensity * labelH * 0.01;
       }
-      ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      if (stickerRotation !== 0) {
+        ctx.save();
+        ctx.translate(drawX + drawW / 2, drawY + drawH / 2);
+        ctx.rotate((stickerRotation * Math.PI) / 180);
+        ctx.drawImage(img, -drawW / 2, -drawH / 2, drawW, drawH);
+        ctx.restore();
+      } else {
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+      }
       ctx.shadowColor = "transparent";
       const tex = new THREE.CanvasTexture(canvas);
       tex.flipY = false;
@@ -182,12 +202,17 @@ function useStickerTexture(
     };
     img.src = stickerSrc;
     return () => { cancelled = true; };
-  }, [stickerSrc, labelW, labelH, stickerScale, stickerOffsetX, stickerOffsetY, shadowIntensity]);
+  }, [stickerSrc, labelW, labelH, stickerScale, stickerOffsetX, stickerOffsetY, shadowIntensity, stickerRotation]);
 
   return canvasTexture;
 }
 
 // ─── 3D Components ─────────────────────────────────────────────────────────────
+
+// Module-level reusable objects for clip-plane updates — avoids GC pressure each frame
+const _cpNormMat = new THREE.Matrix3();
+const _cpVec = new THREE.Vector3();
+const _cpNorm = new THREE.Vector3();
 
 function EditableSodaCan({
   customTexture,
@@ -201,16 +226,20 @@ function EditableSodaCan({
   imageScale,
   imageOffsetX,
   imageOffsetY,
+  imageRotation,
+  imageInvert,
   bgColor,
   stickerImage,
   stickerScale,
   stickerOffsetX,
   stickerOffsetY,
+  stickerRotation,
   stickerRoughness,
   stickerMetalness,
   stickerShadowIntensity,
   rotationSpeed,
   rotationResetRef,
+  canDragRef,
 }: {
   customTexture?: string;
   rotation: [number, number, number];
@@ -223,30 +252,39 @@ function EditableSodaCan({
   imageScale: number;
   imageOffsetX: number;
   imageOffsetY: number;
+  imageRotation: number;
+  imageInvert: boolean;
   bgColor: string;
   stickerImage?: string;
   stickerScale: number;
   stickerOffsetX: number;
   stickerOffsetY: number;
+  stickerRotation: number;
   stickerRoughness: number;
   stickerMetalness: number;
   stickerShadowIntensity: number;
   rotationSpeed: number;
   rotationResetRef: React.MutableRefObject<boolean>;
+  canDragRef: React.MutableRefObject<{ y: number; x: number }>;
 }) {
   const { nodes } = useGLTF("/Soda-can.gltf");
 
   const defaultBySize =
     canSize === "475ml" ? `${BASE}/labels/475d.png` : `${BASE}/labels/355d.png`;
-  const texture = useFitTexture(customTexture, defaultBySize, canSize, imageScale, imageOffsetX, imageOffsetY, bgColor);
-  const stickerTexture = useStickerTexture(stickerImage, canSize, stickerScale, stickerOffsetX, stickerOffsetY, stickerShadowIntensity);
+  const texture = useFitTexture(customTexture, defaultBySize, canSize, imageScale, imageOffsetX, imageOffsetY, bgColor, imageRotation, imageInvert);
+  const stickerTexture = useStickerTexture(stickerImage, canSize, stickerScale, stickerOffsetX, stickerOffsetY, stickerShadowIntensity, stickerRotation);
 
   const groupRef = useRef<THREE.Group>(null);
+  // Stable plane objects mutated each frame to follow the can's world rotation
+  const labelClipTop = useRef(new THREE.Plane());
+  const labelClipBottom = useRef(new THREE.Plane());
+  const labelClipPlanes = useRef([labelClipTop.current, labelClipBottom.current]);
 
   useFrame((_, delta) => {
     if (!groupRef.current) return;
     if (rotationResetRef.current) {
-      groupRef.current.rotation.y = 0;
+      groupRef.current.rotation.set(0, 0, 0);
+      canDragRef.current = { y: 0, x: 0 };
       rotationResetRef.current = false;
     }
     if (isRecording) {
@@ -254,8 +292,24 @@ function EditableSodaCan({
     } else if (isAutoRotating) {
       groupRef.current.rotation.y += delta * 0.5 * rotationSpeed;
     } else {
-      groupRef.current.rotation.set(...rotation);
+      // Drag rotation + slider offset — camera stays fixed so lighting stays fixed
+      groupRef.current.rotation.y = canDragRef.current.y + rotation[1];
+      groupRef.current.rotation.x = canDragRef.current.x + rotation[0];
+      groupRef.current.rotation.z = rotation[2];
     }
+    // Update label clip planes to follow the can's current world rotation.
+    // updateWorldMatrix ensures matrixWorld reflects the rotation just set above.
+    groupRef.current.updateWorldMatrix(true, false);
+    const wm = groupRef.current.matrixWorld;
+    _cpNormMat.getNormalMatrix(wm);
+    labelClipTop.current.setFromNormalAndCoplanarPoint(
+      _cpNorm.set(0, -1, 0).applyMatrix3(_cpNormMat).normalize(),
+      _cpVec.set(0, bodyMaxY * sy, 0).applyMatrix4(wm)
+    );
+    labelClipBottom.current.setFromNormalAndCoplanarPoint(
+      _cpNorm.set(0, 1, 0).applyMatrix3(_cpNormMat).normalize(),
+      _cpVec.set(0, bodyMinY * sy, 0).applyMatrix4(wm)
+    );
   });
 
   const metalGeo = (nodes.cylinder as THREE.Mesh).geometry as THREE.BufferGeometry;
@@ -333,11 +387,11 @@ function EditableSodaCan({
       <mesh castShadow receiveShadow geometry={metalGeo} material={bodyMetalMat} scale={[1, sy, 1]} />
       <mesh castShadow={metalSettings.bottom.castShadow} receiveShadow={metalSettings.bottom.receiveShadow} geometry={metalGeo} material={bottomMetalMat} position-y={-bottomOffsetLocal} />
       <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
-        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} />
+        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} clippingPlanes={labelClipPlanes.current} clipShadows />
       </mesh>
       {stickerTexture && (
         <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
-          <meshStandardMaterial roughness={stickerRoughness} metalness={stickerMetalness} map={stickerTexture} transparent alphaTest={0.01} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} />
+          <meshStandardMaterial roughness={stickerRoughness} metalness={stickerMetalness} map={stickerTexture} transparent alphaTest={0.01} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} clippingPlanes={labelClipPlanes.current} clipShadows />
         </mesh>
       )}
       <mesh castShadow receiveShadow geometry={(nodes.Tab as THREE.Mesh).geometry} position-y={topOffsetLocal}>
@@ -402,21 +456,97 @@ function RotatingEnvironment({ barRotation, otherRotation, bar }: { barRotation:
 }
 
 function CustomOrbitControls({ controlsRef }: { controlsRef: React.RefObject<any> }) {
-  const [isInteracting, setIsInteracting] = useState(false);
-  useFrame(() => {
-    if (!isInteracting && controlsRef.current) {
-      const currentPolar = controlsRef.current.getPolarAngle();
-      const targetPolar = Math.PI / 2;
-      const diff = targetPolar - currentPolar;
-      if (Math.abs(diff) > 0.01) {
-        controlsRef.current.setPolarAngle(currentPolar + diff * 0.1);
-        controlsRef.current.update();
+  // Rotation disabled — can rotates instead of camera, so lighting stays fixed
+  return (
+    <OrbitControls ref={controlsRef} enablePan={false} enableZoom enableRotate={false} minDistance={2} maxDistance={12} />
+  );
+}
+
+// Rotates the CAN via pointer drag so the camera (and lights) stay fixed.
+// Includes inertia (smooth spin-down) and optional LEVEL spring (x returns to 0).
+function CanDragRotator({
+  canDragRef,
+  dragVelocityRef,
+  relightModeRef,
+  levelRef,
+}: {
+  canDragRef: React.MutableRefObject<{ y: number; x: number }>;
+  dragVelocityRef: React.MutableRefObject<{ y: number; x: number }>;
+  relightModeRef: React.MutableRefObject<boolean>;
+  levelRef: React.MutableRefObject<boolean>;
+}) {
+  const { gl } = useThree();
+  const pointerRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const isDraggingRef = useRef(false);
+
+  useEffect(() => {
+    const el = gl.domElement;
+    const onDown = (e: PointerEvent) => {
+      if (relightModeRef.current) return;
+      pointerRef.current = { x: e.clientX, y: e.clientY, t: performance.now() };
+      isDraggingRef.current = true;
+      dragVelocityRef.current = { y: 0, x: 0 };
+      el.setPointerCapture(e.pointerId);
+    };
+    const onMove = (e: PointerEvent) => {
+      if (!pointerRef.current || relightModeRef.current) return;
+      const now = performance.now();
+      const dt = Math.max((now - pointerRef.current.t) / 1000, 0.001); // seconds
+      const dx = e.clientX - pointerRef.current.x;
+      const dy = e.clientY - pointerRef.current.y;
+      // Velocity in rad/sec, capped to avoid runaway spin
+      const MAX_VY = 1.8; // horizontal spin cap
+      const MAX_VX = 1.2; // vertical tilt cap
+      dragVelocityRef.current.y = Math.max(-MAX_VY, Math.min(MAX_VY, (dx * 0.01) / dt));
+      dragVelocityRef.current.x = Math.max(-MAX_VX, Math.min(MAX_VX, (dy * 0.008) / dt));
+      canDragRef.current.y += dx * 0.01;
+      canDragRef.current.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, canDragRef.current.x + dy * 0.008));
+      pointerRef.current = { x: e.clientX, y: e.clientY, t: now };
+    };
+    const onUp = () => { pointerRef.current = null; isDraggingRef.current = false; };
+    el.addEventListener("pointerdown", onDown);
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointerleave", onUp);
+    return () => {
+      el.removeEventListener("pointerdown", onDown);
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointerleave", onUp);
+    };
+  }, [gl.domElement, canDragRef, dragVelocityRef, relightModeRef]);
+
+  useFrame((_, delta) => {
+    if (isDraggingRef.current) return;
+
+    // Inertia: velocity decays to ~5% over 1 second
+    const decay = Math.pow(0.05, delta);
+    dragVelocityRef.current.y *= decay;
+    dragVelocityRef.current.x *= decay;
+
+    // Apply horizontal inertia (Y rotation)
+    if (Math.abs(dragVelocityRef.current.y) > 0.004) {
+      canDragRef.current.y += dragVelocityRef.current.y * delta;
+    } else {
+      dragVelocityRef.current.y = 0;
+    }
+
+    // Vertical: LEVEL spring or inertia
+    if (levelRef.current) {
+      // Spring back to 0 over ~1 second
+      dragVelocityRef.current.x = 0;
+      canDragRef.current.x *= Math.pow(0.002, delta);
+      if (Math.abs(canDragRef.current.x) < 0.002) canDragRef.current.x = 0;
+    } else {
+      if (Math.abs(dragVelocityRef.current.x) > 0.004) {
+        canDragRef.current.x = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, canDragRef.current.x + dragVelocityRef.current.x * delta));
+      } else {
+        dragVelocityRef.current.x = 0;
       }
     }
   });
-  return (
-    <OrbitControls ref={controlsRef} enablePan={false} enableZoom enableRotate minDistance={2} maxDistance={12} minPolarAngle={Math.PI / 6} maxPolarAngle={(Math.PI * 5) / 6} onStart={() => setIsInteracting(true)} onEnd={() => setIsInteracting(false)} enableDamping dampingFactor={0.05} />
-  );
+
+  return null;
 }
 
 // ─── Canvas Exporter ──────────────────────────────────────────────────────────
@@ -432,82 +562,42 @@ function CanvasExporter({ captureRef, canSize }: {
 
   useEffect(() => {
     captureRef.current = () => {
-      const exportH = 2000;
+      // ── 1920×1920 square, zoom-independent (reset to canonical camera pos) ──
+      const OUT = 1920;
 
-      // ── Save renderer state ─────────────────────────────────────────────────
       const savedPixelRatio = gl.getPixelRatio();
       const savedCssW = gl.domElement.width / savedPixelRatio;
       const savedCssH = gl.domElement.height / savedPixelRatio;
 
-      // Scale up to exportH while keeping viewport aspect ratio
-      const exportW = Math.round(exportH * (savedCssW / savedCssH));
-
-      // ── Only adjust camera aspect to match the new buffer dimensions ────────
-      // (position, rotation, FOV stay exactly as the user set them)
       const persp = camera as THREE.PerspectiveCamera;
       const savedAspect = persp.aspect;
-      persp.aspect = exportW / exportH;
+      const savedPos = persp.position.clone();
+
+      // Reset zoom: put camera at the canonical distance for this FOV
+      const baseFov = 25, baseZ = 4;
+      const canonZ = (baseZ * Math.tan(THREE.MathUtils.degToRad(baseFov / 2))) /
+                     Math.tan(THREE.MathUtils.degToRad(persp.fov / 2));
+      persp.position.set(0, 0, canonZ);
+      persp.aspect = 1; // square
       persp.updateProjectionMatrix();
 
-      // ── Resize buffer only — false = don't touch CSS style ─────────────────
       gl.setPixelRatio(1);
-      gl.setSize(exportW, exportH, false);
-
-      // ── Render via the exact same pipeline the user sees ───────────────────
+      gl.setSize(OUT, OUT, false);
       gl.render(scene, camera);
       const dataUrl = gl.domElement.toDataURL("image/png");
 
-      // ── Restore immediately ─────────────────────────────────────────────────
+      // ── Restore ─────────────────────────────────────────────────────────────
       gl.setPixelRatio(savedPixelRatio);
       gl.setSize(savedCssW, savedCssH, false);
       persp.aspect = savedAspect;
+      persp.position.copy(savedPos);
       persp.updateProjectionMatrix();
 
-      // ── Crop + scale async ──────────────────────────────────────────────────
-      const img = new Image();
-      img.onload = () => {
-        const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = exportW;
-        tempCanvas.height = exportH;
-        const ctx = tempCanvas.getContext("2d")!;
-        ctx.drawImage(img, 0, 0);
-        const pixels = ctx.getImageData(0, 0, exportW, exportH).data;
-
-        let minX = exportW, maxX = 0, minY = exportH, maxY = 0;
-        for (let y = 0; y < exportH; y++) {
-          for (let x = 0; x < exportW; x++) {
-            if (pixels[(y * exportW + x) * 4 + 3] > 10) {
-              if (x < minX) minX = x;
-              if (x > maxX) maxX = x;
-              if (y < minY) minY = y;
-              if (y > maxY) maxY = y;
-            }
-          }
-        }
-        if (maxX <= minX || maxY <= minY) return;
-
-        const contentW = maxX - minX + 1;
-        const contentH = maxY - minY + 1;
-        const pad = Math.round(Math.max(contentW, contentH) * 0.07);
-        const croppedW = contentW + pad * 2;
-        const croppedH = contentH + pad * 2;
-        const targetH = 1200;
-        const targetW = Math.round(croppedW * (targetH / croppedH));
-
-        const outCanvas = document.createElement("canvas");
-        outCanvas.width = targetW;
-        outCanvas.height = targetH;
-        outCanvas.getContext("2d")!.drawImage(
-          tempCanvas, minX - pad, minY - pad, croppedW, croppedH,
-          0, 0, targetW, targetH
-        );
-
-        const a = document.createElement("a");
-        a.download = `can-${canSize}.png`;
-        a.href = outCanvas.toDataURL("image/png");
-        a.click();
-      };
-      img.src = dataUrl;
+      // ── Download ─────────────────────────────────────────────────────────────
+      const a = document.createElement("a");
+      a.download = `can-${canSize}.png`;
+      a.href = dataUrl;
+      a.click();
     };
     return () => { captureRef.current = null; };
   }, [gl, scene, camera, canSize, captureRef]);
@@ -526,11 +616,36 @@ function SliderRow({ label, value, min, max, step, onChange, display }: {
   onChange: (v: number) => void;
   display: (v: number) => string;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [editVal, setEditVal] = useState("");
+
+  const commit = (raw: string) => {
+    const n = parseFloat(raw);
+    if (!isNaN(n)) onChange(Math.max(min, Math.min(max, n)));
+    setEditing(false);
+  };
+
   return (
     <div className="flex flex-col gap-1">
       <div className="flex justify-between items-center">
         <span className="sr-label font-mono text-[11px]">{label}</span>
-        <span className="sr-value font-mono text-[11px] tabular-nums">{display(value)}</span>
+        {editing ? (
+          <input
+            type="number" autoFocus
+            value={editVal}
+            onChange={e => setEditVal(e.target.value)}
+            onBlur={e => commit(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") commit(editVal); if (e.key === "Escape") setEditing(false); }}
+            className="sr-value font-mono text-[11px] tabular-nums bg-transparent outline-none border-b border-white/25 w-16 text-right"
+            style={{ MozAppearance: "textfield" } as React.CSSProperties}
+          />
+        ) : (
+          <span
+            className="sr-value font-mono text-[11px] tabular-nums cursor-text select-none"
+            title="Click to edit"
+            onClick={() => { setEditVal(String(value)); setEditing(true); }}
+          >{display(value)}</span>
+        )}
       </div>
       <input type="range" min={min} max={max} step={step} value={value} onChange={e => onChange(parseFloat(e.target.value))} className="w-full" />
     </div>
@@ -590,9 +705,20 @@ export default function Page() {
   const [imageScale, setImageScale] = useState(1.0);
   const [imageOffsetX, setImageOffsetX] = useState(0);
   const [imageOffsetY, setImageOffsetY] = useState(0);
+  const [imageRotation, setImageRotation] = useState(0);
+  const [imageInvert, setImageInvert] = useState(false);
   const [bgColor, setBgColor] = useState("#c6c6c8");
+  const [stickerRotation, setStickerRotation] = useState(0);
+  const [recentStickers, setRecentStickers] = useState<string[]>([]);
+  const canDragRef = useRef({ y: 0, x: 0 });
+  const dragVelocityRef = useRef({ y: 0, x: 0 });
+  const relightModeRef = useRef(false);
+  const [levelEnabled, setLevelEnabled] = useState(true);
+  const levelRef = useRef(true);
 
   const [isPreparingRecord, setIsPreparingRecord] = useState(false);
+  const [relightMode, setRelightMode] = useState(false);
+  const [isRelightDragging, setIsRelightDragging] = useState(false);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", isDarkMode ? "dark" : "light");
@@ -635,7 +761,12 @@ export default function Page() {
           if (!file) break;
           if (pasteTarget === "sticker") {
             const reader = new FileReader();
-            reader.onload = (ev) => { if (ev.target?.result) setStickerImage(ev.target.result as string); };
+            reader.onload = (ev) => {
+              const src = ev.target?.result as string;
+              if (!src) return;
+              setStickerImage(src);
+              setRecentStickers(prev => [src, ...prev.filter(s => s !== src)].slice(0, 6));
+            };
             reader.readAsDataURL(file);
           } else {
             readFileAsImage(file);
@@ -648,7 +779,7 @@ export default function Page() {
     return () => document.removeEventListener("paste", handlePaste);
   }, [readFileAsImage, pasteTarget]);
 
-  const handleResetView = () => { rotationResetRef.current = true; setRotation([0, 0, 0]); };
+  const handleResetView = () => { rotationResetRef.current = true; setRotation([0, 0, 0]); canDragRef.current = { y: 0, x: 0 }; dragVelocityRef.current = { y: 0, x: 0 }; };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -672,6 +803,23 @@ export default function Page() {
     const file = e.dataTransfer.files?.[0];
     if (file) readFileAsImage(file);
   };
+
+  const handleRelightMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (!isRelightDragging) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const dx = e.clientX - rect.left - cx;
+    const dy = e.clientY - rect.top - cy;
+    const angle = ((Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2));
+    const normY = (e.clientY - rect.top - cy) / (cy * 0.75);
+    setBar(prev => ({
+      ...prev,
+      enabled: true,
+      rotation: angle,
+      y: Math.max(-3, Math.min(3, normY * 2.5)),
+    }));
+  }, [isRelightDragging]);
 
   const updateLightingSetting = (key: keyof LightingSettings, value: any) => {
     setLightingSettings((prev) => ({ ...prev, [key]: value }));
@@ -719,7 +867,52 @@ export default function Page() {
     setMaterialPreset("satin");
   };
 
-  const toggleAutoRotation = () => setIsAutoRotating((v) => !v);
+  // Keep relightModeRef in sync so CanDragRotator sees latest value without stale closure
+  useEffect(() => { relightModeRef.current = relightMode; }, [relightMode, relightModeRef]);
+  useEffect(() => { levelRef.current = levelEnabled; }, [levelEnabled]);
+
+  // ── Remove background (flood-fill from corners) ─────────────────────────────
+  const removeBackground = useCallback((src: string, target: "image" | "sticker") => {
+    const img = new Image();
+    img.onload = () => {
+      const W = img.width, H = img.height;
+      const cv = document.createElement("canvas");
+      cv.width = W; cv.height = H;
+      const ctx = cv.getContext("2d")!;
+      ctx.drawImage(img, 0, 0);
+      const imd = ctx.getImageData(0, 0, W, H);
+      const d = imd.data;
+      const bg = [d[0], d[1], d[2]];
+      const tol = 40;
+      const dist = (i: number) => {
+        const dr = d[i] - bg[0], dg = d[i + 1] - bg[1], db = d[i + 2] - bg[2];
+        return Math.sqrt(dr * dr + dg * dg + db * db);
+      };
+      const visited = new Uint8Array(W * H);
+      const q: number[] = [0, W - 1, (H - 1) * W, (H - 1) * W + W - 1];
+      while (q.length) {
+        const p = q.pop()!;
+        if (visited[p]) continue;
+        visited[p] = 1;
+        if (dist(p * 4) > tol) continue;
+        d[p * 4 + 3] = 0;
+        const x = p % W, y = Math.floor(p / W);
+        if (x > 0) q.push(p - 1);
+        if (x < W - 1) q.push(p + 1);
+        if (y > 0) q.push(p - W);
+        if (y < H - 1) q.push(p + W);
+      }
+      ctx.putImageData(imd, 0, 0);
+      const result = cv.toDataURL("image/png");
+      if (target === "sticker") {
+        setStickerImage(result);
+        setRecentStickers(prev => [result, ...prev.filter(s => s !== result)].slice(0, 6));
+      } else {
+        addImage(result);
+      }
+    };
+    img.src = src;
+  }, [addImage]);
 
   // ── Preset JSON ────────────────────────────────────────────────────────────
   type AppSettings = {
@@ -756,6 +949,7 @@ export default function Page() {
     if (s.bar) setBar(prev => ({ ...prev, ...(s.bar as BarSettings) }));
   };
 
+
   const onLoadPresetClick = () => presetInputRef.current?.click();
   const onPresetFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -779,7 +973,12 @@ export default function Page() {
     const file = e.target.files?.[0];
     if (!file || !file.type.startsWith("image/")) return;
     const reader = new FileReader();
-    reader.onload = (ev) => { if (ev.target?.result) setStickerImage(ev.target.result as string); };
+    reader.onload = (ev) => {
+      const src = ev.target?.result as string;
+      if (!src) return;
+      setStickerImage(src);
+      setRecentStickers(prev => [src, ...prev.filter(s => s !== src)].slice(0, 6));
+    };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
@@ -859,7 +1058,7 @@ export default function Page() {
     : "bg-black/[0.05] border border-black/[0.1] rounded text-black/65 font-mono text-[11px] px-2 py-1 outline-none focus:border-black/25 transition-colors w-full";
   const sectionBtn = `w-full flex items-center justify-between px-4 py-3 text-left transition-colors ${d ? "hover:bg-white/[0.025]" : "hover:bg-black/[0.025]"}`;
   const sectionTitle = `font-mono text-[10px] uppercase tracking-[0.18em] ${d ? "text-white/40" : "text-black/40"}`;
-  const chevronCls = `text-[10px] ${d ? "text-white/20" : "text-black/25"}`;
+  const chevronCls = `text-[14px] leading-none ${d ? "text-white/30" : "text-black/35"}`;
   const divider = <div className={`mx-4 border-t ${d ? "border-white/[0.07]" : "border-black/[0.07]"}`} />;
   const subLabel = `font-mono text-[10px] ${d ? "text-white/25" : "text-black/30"} uppercase tracking-wider`;
   const subLabelSm = `font-mono text-[9px] ${d ? "text-white/25" : "text-black/30"} uppercase tracking-wider`;
@@ -878,16 +1077,47 @@ export default function Page() {
   const appliedTexture = customImage || selectedTexture || defaultBySize;
 
   return (
-    <div className="h-screen flex overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
+    <div className="h-screen relative overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
 
       {/* ── 3D Canvas ── */}
       <div
-        className="flex-1 relative"
-        style={{ background: d ? "#000" : "#ebebeb" }}
+        className="absolute inset-0 overflow-hidden"
+        style={{ right: "272px", background: d ? "#000" : "#ebebeb" }}
         onDragOver={handleCanvasDragOver}
         onDragLeave={handleCanvasDragLeave}
         onDrop={handleCanvasDrop}
       >
+        {/* ── Relight overlay — intercepts mouse when relightMode is active ── */}
+        {relightMode && (
+          <div
+            className="absolute inset-0 z-10"
+            style={{ cursor: isRelightDragging ? "grabbing" : "crosshair" }}
+            onMouseDown={() => setIsRelightDragging(true)}
+            onMouseUp={() => setIsRelightDragging(false)}
+            onMouseLeave={() => setIsRelightDragging(false)}
+            onMouseMove={handleRelightMove}
+          >
+            {/* Light position indicator */}
+            <div
+              className="absolute pointer-events-none rounded-full"
+              style={{
+                left: `calc(50% + ${Math.sin(bar.rotation) * 90}px - 8px)`,
+                top: `calc(50% - ${Math.cos(bar.rotation) * 55}px + ${bar.y * 15}px - 8px)`,
+                width: 16, height: 16,
+                background: bar.color || "#fafafa",
+                border: "2px solid rgba(255,255,255,0.6)",
+                boxShadow: "0 0 14px 5px rgba(255,255,255,0.18)",
+              }}
+            />
+            <div
+              className="absolute bottom-20 left-1/2 -translate-x-1/2 pointer-events-none font-mono text-[10px] uppercase tracking-widest px-4 py-1.5 rounded-full"
+              style={{ background: "rgba(0,0,0,0.55)", backdropFilter: "blur(8px)", color: "rgba(255,255,255,0.45)", border: "1px solid rgba(255,255,255,0.09)" }}
+            >
+              drag to relight
+            </div>
+          </div>
+        )}
+
         {isCanvasDragOver && (
           <div className="absolute inset-0 z-10 pointer-events-none flex items-center justify-center" style={{ background: "rgba(74,158,255,0.06)", border: "2px dashed rgba(74,158,255,0.35)" }}>
             <span className="font-mono text-[12px] text-blue-400/70 uppercase tracking-widest">Drop image</span>
@@ -897,8 +1127,20 @@ export default function Page() {
           <SceneExposure exposure={lightingSettings.exposure} />
           <CameraPerspective fov={cameraFov} />
           <CustomLighting settings={lightingSettings} />
-          <EditableSodaCan customTexture={appliedTexture} rotation={rotation} isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress} canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings} imageScale={imageScale} imageOffsetX={imageOffsetX} imageOffsetY={imageOffsetY} bgColor={bgColor} stickerImage={stickerImage || undefined} stickerScale={stickerScale} stickerOffsetX={stickerOffsetX} stickerOffsetY={stickerOffsetY} stickerRoughness={stickerRoughness} stickerMetalness={stickerMetalness} stickerShadowIntensity={stickerShadowIntensity} rotationSpeed={rotationSpeed} rotationResetRef={rotationResetRef} />
+          <EditableSodaCan
+            customTexture={appliedTexture} rotation={rotation}
+            isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress}
+            canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings}
+            imageScale={imageScale} imageOffsetX={imageOffsetX} imageOffsetY={imageOffsetY}
+            imageRotation={imageRotation} imageInvert={imageInvert} bgColor={bgColor}
+            stickerImage={stickerImage || undefined}
+            stickerScale={stickerScale} stickerOffsetX={stickerOffsetX} stickerOffsetY={stickerOffsetY}
+            stickerRotation={stickerRotation}
+            stickerRoughness={stickerRoughness} stickerMetalness={stickerMetalness} stickerShadowIntensity={stickerShadowIntensity}
+            rotationSpeed={rotationSpeed} rotationResetRef={rotationResetRef} canDragRef={canDragRef}
+          />
           <CustomOrbitControls controlsRef={controlsRef} />
+          <CanDragRotator canDragRef={canDragRef} dragVelocityRef={dragVelocityRef} relightModeRef={relightModeRef} levelRef={levelRef} />
           <RotatingEnvironment barRotation={bar.rotation} otherRotation={lightingSettings.otherRotation} intensity={lightingSettings.envIntensity} bar={bar} />
           <CanvasExporter captureRef={captureRef} canSize={canSize} />
         </Canvas>
@@ -923,6 +1165,23 @@ export default function Page() {
           </div>
           {/* Divider */}
           <div className="w-px h-5 mx-0.5" style={{ background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }} />
+          {/* Level — spring return to vertical center */}
+          <button
+            onClick={() => setLevelEnabled(v => !v)}
+            title="Level — auto-returns can to upright after vertical tilt"
+            className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${levelEnabled ? "border-emerald-400/55 bg-emerald-400/[0.10] text-emerald-300/85" : ""}`}
+            style={!levelEnabled ? { border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" } : {}}
+          >Level</button>
+          {/* Divider */}
+          <div className="w-px h-5 mx-0.5" style={{ background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }} />
+          {/* Relight mode */}
+          <button
+            onClick={() => setRelightMode(v => !v)}
+            disabled={isRecording}
+            title="Relight — drag on canvas to move light"
+            className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording ? "opacity-30 cursor-not-allowed" : ""} ${relightMode ? "border-amber-400/55 bg-amber-400/[0.12] text-amber-300/85" : ""}`}
+            style={!relightMode ? { border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" } : {}}
+          >◉</button>
           {/* PNG export */}
           <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord}
             className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording || isPreparingRecord ? "opacity-30 cursor-not-allowed" : ""}`}
@@ -948,7 +1207,7 @@ export default function Page() {
 
       {/* ── Right Sidebar ── */}
       <div
-        className="flex-shrink-0 h-screen overflow-y-auto flex flex-col"
+        className="absolute top-0 right-0 h-full overflow-y-auto flex flex-col"
         style={{ width: "272px", background: d ? "rgba(7,7,7,0.97)" : "rgba(242,242,242,0.98)", borderLeft: d ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.08)" }}
       >
         {/* Header */}
@@ -1016,11 +1275,16 @@ export default function Page() {
                   <SliderRow label="Scale" value={imageScale} min={0.1} max={1.5} step={0.01} onChange={setImageScale} display={v => `${Math.round(v * 100)}%`} />
                   <SliderRow label="Position X" value={imageOffsetX} min={-0.5} max={0.5} step={0.01} onChange={setImageOffsetX} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
                   <SliderRow label="Position Y" value={imageOffsetY} min={-0.5} max={0.5} step={0.01} onChange={setImageOffsetY} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <SliderRow label="Rotation" value={imageRotation} min={-180} max={180} step={1} onChange={setImageRotation} display={v => `${Math.round(v)}°`} />
                   <div className="flex items-center justify-between">
                     <span className={subLabelSm}>BG Color</span>
                     <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} className="w-8 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
                   </div>
-                  <button onClick={() => { setCustomImage(""); setImageScale(1.0); setImageOffsetX(0); setImageOffsetY(0); }} className={removeBtn}>Remove Image</button>
+                  <button onClick={() => setImageInvert(v => !v)} className={`${removeBtn} ${imageInvert ? (d ? "border-white/30 text-white/70" : "border-black/30 text-black/70") : ""}`}>
+                    {imageInvert ? "Invert: ON" : "Invert Colors"}
+                  </button>
+                  <button onClick={() => removeBackground(customImage, "image")} className={removeBtn}>Remove Background</button>
+                  <button onClick={() => { setCustomImage(""); setImageScale(1.0); setImageOffsetX(0); setImageOffsetY(0); setImageRotation(0); setImageInvert(false); }} className={removeBtn}>Remove Image</button>
                 </>
               )}
               {/* Recent images */}
@@ -1076,12 +1340,33 @@ export default function Page() {
                   <SliderRow label="Scale" value={stickerScale} min={0.05} max={1.5} step={0.01} onChange={setStickerScale} display={v => `${Math.round(v * 100)}%`} />
                   <SliderRow label="Position X" value={stickerOffsetX} min={-0.5} max={0.5} step={0.01} onChange={setStickerOffsetX} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
                   <SliderRow label="Position Y" value={stickerOffsetY} min={-0.5} max={0.5} step={0.01} onChange={setStickerOffsetY} display={v => `${v >= 0 ? "+" : ""}${Math.round(v * 100)}%`} />
+                  <SliderRow label="Rotation" value={stickerRotation} min={-180} max={180} step={1} onChange={setStickerRotation} display={v => `${Math.round(v)}°`} />
                   <SliderRow label="Shadow" value={stickerShadowIntensity} min={0} max={1} step={0.01} onChange={setStickerShadowIntensity} display={v => `${Math.round(v * 100)}%`} />
                   <div className={`pt-1 ${subLabelSm}`}>Material</div>
                   <SliderRow label="Roughness" value={stickerRoughness} min={0} max={1} step={0.01} onChange={setStickerRoughness} display={v => v.toFixed(2)} />
                   <SliderRow label="Metalness" value={stickerMetalness} min={0} max={1} step={0.01} onChange={setStickerMetalness} display={v => v.toFixed(2)} />
-                  <button onClick={() => { setStickerImage(""); setStickerScale(1.0); setStickerOffsetX(0); setStickerOffsetY(0); setStickerShadowIntensity(0.3); }} className={removeBtn}>Remove Sticker</button>
+                  <button onClick={() => removeBackground(stickerImage, "sticker")} className={removeBtn}>Remove Background</button>
+                  <button onClick={() => { setStickerImage(""); setStickerScale(1.0); setStickerOffsetX(0); setStickerOffsetY(0); setStickerRotation(0); setStickerShadowIntensity(0.3); }} className={removeBtn}>Remove Sticker</button>
                 </>
+              )}
+              {/* Recent stickers */}
+              {recentStickers.length > 0 && (
+                <div>
+                  <div className={`mb-1.5 ${subLabelSm}`}>Recent</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {recentStickers.map((img, i) => (
+                      <button key={i} onClick={() => setStickerImage(img)} title={`Recent sticker ${i + 1}`}
+                        className={`w-11 h-11 rounded overflow-hidden border transition-all duration-150 flex-shrink-0 ${
+                          stickerImage === img ? "border-purple-400/70 ring-1 ring-purple-400/30"
+                          : d ? "border-white/[0.14] hover:border-white/35 opacity-70 hover:opacity-100"
+                          : "border-black/[0.14] hover:border-black/35 opacity-70 hover:opacity-100"
+                        }`}
+                      >
+                        <img src={img} alt="" className="w-full h-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
               <input ref={stickerInputRef} type="file" accept="image/*" onChange={handleStickerUpload} className="hidden" />
             </div>
@@ -1173,6 +1458,11 @@ export default function Page() {
               </div>
               {bar.enabled && (
                 <div className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className={`${subLabelSm} flex-shrink-0`} style={{ minWidth: 48 }}>Color</span>
+                    <input type="color" value={bar.color} onChange={(e) => setBar((p) => ({ ...p, color: e.target.value }))} className="w-7 h-7 rounded flex-shrink-0" />
+                    <input type="text" value={bar.color} onChange={(e) => setBar((p) => ({ ...p, color: e.target.value }))} className={inputBase} />
+                  </div>
                   <SliderRow label="Intensity" value={bar.intensity} min={0} max={20} step={0.05} onChange={(v) => setBar((p) => ({ ...p, intensity: v }))} display={(v) => v.toFixed(1)} />
                   <SliderRow label="Rotation" value={bar.rotation} min={0} max={Math.PI * 2} step={0.01} onChange={(v) => setBar((p) => ({ ...p, rotation: v }))} display={(v) => `${Math.round((v * 180) / Math.PI)}°`} />
                   <SliderRow label="Height" value={bar.y} min={-3} max={3} step={0.01} onChange={(v) => setBar((p) => ({ ...p, y: v }))} display={(v) => v.toFixed(2)} />
@@ -1242,6 +1532,7 @@ export default function Page() {
                 </div>
                 <input ref={presetInputRef} type="file" accept="application/json" onChange={onPresetFileSelected} className="hidden" />
               </div>
+              <button onClick={handleResetView} className={resetBtnCls} style={{ borderRadius: "8px" }}>Reset View</button>
               <button onClick={resetToDefault} className={resetBtnCls} style={{ borderRadius: "8px" }}>Reset to Default</button>
             </div>
           )}
