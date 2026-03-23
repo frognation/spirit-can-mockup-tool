@@ -420,9 +420,9 @@ function CustomOrbitControls({ controlsRef }: { controlsRef: React.RefObject<any
 }
 
 // ─── Canvas Exporter ──────────────────────────────────────────────────────────
-// Uses the main canvas (same pipeline as what the user sees) to guarantee
-// identical tone mapping, lighting, and color space. We temporarily resize
-// the canvas buffer to 2000×2000 without touching CSS (no visible flash).
+// Captures exactly what the user sees: same camera, same rotation, same FOV.
+// Just scales the buffer up to exportH=2000 at the same viewport aspect ratio,
+// renders once via the normal pipeline, then crops + scales to 1200px height.
 
 function CanvasExporter({ captureRef, canSize }: {
   captureRef: React.MutableRefObject<(() => void) | null>;
@@ -432,32 +432,26 @@ function CanvasExporter({ captureRef, canSize }: {
 
   useEffect(() => {
     captureRef.current = () => {
-      const exportSize = 2000;
+      const exportH = 2000;
 
-      // ── Save state ──────────────────────────────────────────────────────────
+      // ── Save renderer state ─────────────────────────────────────────────────
       const savedPixelRatio = gl.getPixelRatio();
       const savedCssW = gl.domElement.width / savedPixelRatio;
       const savedCssH = gl.domElement.height / savedPixelRatio;
 
-      const persp = camera as THREE.PerspectiveCamera;
-      const savedFov = persp.fov;
-      const savedAspect = persp.aspect;
-      const savedPos = persp.position.clone();
-      const savedQuat = persp.quaternion.clone();
+      // Scale up to exportH while keeping viewport aspect ratio
+      const exportW = Math.round(exportH * (savedCssW / savedCssH));
 
-      // ── Set up export camera (front-facing, square, tight FOV) ─────────────
-      const exportFov = 20;
-      const exportZ = (4 * Math.tan(THREE.MathUtils.degToRad(25 / 2))) /
-                          Math.tan(THREE.MathUtils.degToRad(exportFov / 2));
-      persp.aspect = 1;
-      persp.fov = exportFov;
-      persp.position.set(0, 0, exportZ);
-      persp.lookAt(0, 0, 0);
+      // ── Only adjust camera aspect to match the new buffer dimensions ────────
+      // (position, rotation, FOV stay exactly as the user set them)
+      const persp = camera as THREE.PerspectiveCamera;
+      const savedAspect = persp.aspect;
+      persp.aspect = exportW / exportH;
       persp.updateProjectionMatrix();
 
       // ── Resize buffer only — false = don't touch CSS style ─────────────────
       gl.setPixelRatio(1);
-      gl.setSize(exportSize, exportSize, false);
+      gl.setSize(exportW, exportH, false);
 
       // ── Render via the exact same pipeline the user sees ───────────────────
       gl.render(scene, camera);
@@ -466,26 +460,23 @@ function CanvasExporter({ captureRef, canSize }: {
       // ── Restore immediately ─────────────────────────────────────────────────
       gl.setPixelRatio(savedPixelRatio);
       gl.setSize(savedCssW, savedCssH, false);
-      persp.fov = savedFov;
       persp.aspect = savedAspect;
-      persp.position.copy(savedPos);
-      persp.quaternion.copy(savedQuat);
       persp.updateProjectionMatrix();
 
-      // ── Crop + scale async (after restore so UI is unblocked) ──────────────
+      // ── Crop + scale async ──────────────────────────────────────────────────
       const img = new Image();
       img.onload = () => {
         const tempCanvas = document.createElement("canvas");
-        tempCanvas.width = exportSize;
-        tempCanvas.height = exportSize;
+        tempCanvas.width = exportW;
+        tempCanvas.height = exportH;
         const ctx = tempCanvas.getContext("2d")!;
         ctx.drawImage(img, 0, 0);
-        const pixels = ctx.getImageData(0, 0, exportSize, exportSize).data;
+        const pixels = ctx.getImageData(0, 0, exportW, exportH).data;
 
-        let minX = exportSize, maxX = 0, minY = exportSize, maxY = 0;
-        for (let y = 0; y < exportSize; y++) {
-          for (let x = 0; x < exportSize; x++) {
-            if (pixels[(y * exportSize + x) * 4 + 3] > 10) {
+        let minX = exportW, maxX = 0, minY = exportH, maxY = 0;
+        for (let y = 0; y < exportH; y++) {
+          for (let x = 0; x < exportW; x++) {
+            if (pixels[(y * exportW + x) * 4 + 3] > 10) {
               if (x < minX) minX = x;
               if (x > maxX) maxX = x;
               if (y < minY) minY = y;
