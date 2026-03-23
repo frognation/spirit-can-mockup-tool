@@ -654,6 +654,15 @@ function SliderRow({ label, value, min, max, step, onChange, display }: {
 
 // ─── Main Page ─────────────────────────────────────────────────────────────────
 
+interface HistoryState {
+  customImage: string; imageScale: number; imageOffsetX: number; imageOffsetY: number;
+  imageRotation: number; imageInvert: boolean; bgColor: string;
+  stickerImage: string; stickerScale: number; stickerOffsetX: number; stickerOffsetY: number;
+  stickerRotation: number; stickerShadowIntensity: number; stickerRoughness: number; stickerMetalness: number;
+  canSize: CanSize; labelRoughness: number; materialPreset: MaterialPreset; metalSettings: MetalSettings;
+  rotation: [number, number, number]; cameraFov: number; lightingSettings: LightingSettings; bar: BarSettings;
+}
+
 const DEFAULT_METAL: MetalSettings = {
   top: { color: "#c7c7c7", brightness: 1.35, roughness: 0.48, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.4 },
   bottom: { color: "#b8b8b8", brightness: 1.4, roughness: 0.46, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.5 },
@@ -870,6 +879,86 @@ export default function Page() {
   // Keep relightModeRef in sync so CanDragRotator sees latest value without stale closure
   useEffect(() => { relightModeRef.current = relightMode; }, [relightMode, relightModeRef]);
   useEffect(() => { levelRef.current = levelEnabled; }, [levelEnabled]);
+
+  // ── Undo / Redo ──────────────────────────────────────────────────────────────
+  const historyRef = useRef<HistoryState[]>([]);
+  const historyIdxRef = useRef(-1);
+  const skipHistoryRef = useRef(false);
+  const historyDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+
+  const buildSnapshot = (): HistoryState => ({
+    customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor,
+    stickerImage, stickerScale, stickerOffsetX, stickerOffsetY, stickerRotation,
+    stickerShadowIntensity, stickerRoughness, stickerMetalness,
+    canSize, labelRoughness, materialPreset, metalSettings,
+    rotation, cameraFov, lightingSettings, bar,
+  });
+
+  const applySnapshot = useCallback((s: HistoryState) => {
+    skipHistoryRef.current = true;
+    setCustomImage(s.customImage); setImageScale(s.imageScale); setImageOffsetX(s.imageOffsetX);
+    setImageOffsetY(s.imageOffsetY); setImageRotation(s.imageRotation); setImageInvert(s.imageInvert);
+    setBgColor(s.bgColor); setStickerImage(s.stickerImage); setStickerScale(s.stickerScale);
+    setStickerOffsetX(s.stickerOffsetX); setStickerOffsetY(s.stickerOffsetY); setStickerRotation(s.stickerRotation);
+    setStickerShadowIntensity(s.stickerShadowIntensity); setStickerRoughness(s.stickerRoughness);
+    setStickerMetalness(s.stickerMetalness); setCanSize(s.canSize); setLabelRoughness(s.labelRoughness);
+    setMaterialPreset(s.materialPreset); setMetalSettings(s.metalSettings); setRotation(s.rotation);
+    setCameraFov(s.cameraFov); setLightingSettings(s.lightingSettings); setBar(s.bar);
+  }, []); // eslint-disable-line
+
+  // Capture initial snapshot on mount
+  useEffect(() => {
+    const initial = buildSnapshot();
+    historyRef.current = [initial];
+    historyIdxRef.current = 0;
+  }, []); // eslint-disable-line
+
+  // Debounced snapshot: fires 400ms after the last state change
+  useEffect(() => {
+    if (historyIdxRef.current < 0) return; // not yet initialized
+    const snapshot = buildSnapshot(); // capture at THIS render's values
+    if (historyDebounceRef.current) clearTimeout(historyDebounceRef.current);
+    historyDebounceRef.current = setTimeout(() => {
+      if (skipHistoryRef.current) { skipHistoryRef.current = false; return; }
+      const trimmed = historyRef.current.slice(0, historyIdxRef.current + 1);
+      const next = [...trimmed, snapshot].slice(-50);
+      historyRef.current = next;
+      historyIdxRef.current = next.length - 1;
+      setCanUndo(historyIdxRef.current > 0);
+      setCanRedo(false);
+    }, 400);
+  }, [customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor, // eslint-disable-line
+      stickerImage, stickerScale, stickerOffsetX, stickerOffsetY, stickerRotation,
+      stickerShadowIntensity, stickerRoughness, stickerMetalness,
+      canSize, labelRoughness, materialPreset, metalSettings, rotation, cameraFov, lightingSettings, bar]);
+
+  const undo = useCallback(() => {
+    if (historyIdxRef.current <= 0) return;
+    historyIdxRef.current -= 1;
+    applySnapshot(historyRef.current[historyIdxRef.current]);
+    setCanUndo(historyIdxRef.current > 0);
+    setCanRedo(true);
+  }, [applySnapshot]);
+
+  const redo = useCallback(() => {
+    if (historyIdxRef.current >= historyRef.current.length - 1) return;
+    historyIdxRef.current += 1;
+    applySnapshot(historyRef.current[historyIdxRef.current]);
+    setCanUndo(true);
+    setCanRedo(historyIdxRef.current < historyRef.current.length - 1);
+  }, [applySnapshot]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key !== "z") return;
+      e.preventDefault();
+      if (e.shiftKey) redo(); else undo();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [undo, redo]);
 
   // ── Remove background (flood-fill from corners) ─────────────────────────────
   const removeBackground = useCallback((src: string, target: "image" | "sticker") => {
@@ -1148,6 +1237,15 @@ export default function Page() {
         {/* ── Bottom Center HUD ── */}
         <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 rounded-2xl"
           style={{ background: d ? "rgba(12,12,12,0.82)" : "rgba(238,238,238,0.90)", border: d ? "1px solid rgba(255,255,255,0.13)" : "1px solid rgba(0,0,0,0.13)", backdropFilter: "blur(16px)", WebkitBackdropFilter: "blur(16px)" }}>
+          {/* Undo */}
+          <button onClick={undo} disabled={!canUndo || isRecording} title="Undo (⌘Z)"
+            className={`w-7 h-7 rounded-lg flex items-center justify-center text-[15px] transition-all duration-150 ${!canUndo || isRecording ? "opacity-20 cursor-not-allowed" : "hover:opacity-80"}`}
+            style={{ color: d ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)" }}>↺</button>
+          {/* Redo */}
+          <button onClick={redo} disabled={!canRedo || isRecording} title="Redo (⌘⇧Z)"
+            className={`w-7 h-7 rounded-lg flex items-center justify-center text-[15px] transition-all duration-150 ${!canRedo || isRecording ? "opacity-20 cursor-not-allowed" : "hover:opacity-80"}`}
+            style={{ color: d ? "rgba(255,255,255,0.55)" : "rgba(0,0,0,0.55)" }}>↻</button>
+          <div className="w-px h-5 mx-0.5" style={{ background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }} />
           {/* Reset view */}
           <button onClick={handleResetView} title="Reset to front" disabled={isRecording}
             className={`w-7 h-7 rounded-lg flex items-center justify-center font-mono text-[13px] transition-all duration-150 ${isRecording ? "opacity-30 cursor-not-allowed" : ""}`}
