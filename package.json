@@ -2,11 +2,16 @@
   "name": "can-editor-original",
   "version": "2.0.0",
   "private": true,
+  "main": "electron-dist/main.js",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "electron:compile": "tsc -p electron/tsconfig.json",
+    "electron:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,yellow \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:build": "ELECTRON=true next build && npm run electron:compile && electron-builder --mac",
+    "electron:pack": "ELECTRON=true next build && npm run electron:compile && electron-builder --mac --dir"
   },
   "dependencies": {
     "@react-three/drei": "^9.120.5",
@@ -22,10 +27,14 @@
     "@types/react-dom": "^18",
     "@types/three": "^0.171.0",
     "autoprefixer": "^10.4.19",
+    "concurrently": "^9.1.2",
+    "electron": "^33.3.1",
+    "electron-builder": "^25.1.8",
     "eslint": "^8",
     "eslint-config-next": "14.2.22",
     "postcss": "^8.4.38",
     "tailwindcss": "^3.4.4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^8.0.3"
   }
 }

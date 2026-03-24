@@ -16,6 +16,17 @@ useGLTF.preload("/Soda-can.gltf");
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 
+// ─── Electron API bridge type (only present when running as desktop app) ─────
+interface ElectronAPI {
+  savePng: (dataUrl: string, defaultName: string) => Promise<{ success: boolean; filePath?: string }>;
+  openImage: (target: "label" | "sticker") => Promise<{ dataUrl: string; target: "label" | "sticker" } | null>;
+  openImagesBatch: () => Promise<{ dataUrl: string; name: string }[]>;
+  savePngsBatch: (items: { dataUrl: string; name: string }[]) => Promise<{ success: boolean; saved?: number }>;
+  getHistory: () => Promise<{ images: string[]; stickers: string[] }>;
+  setHistory: (data: { images: string[]; stickers: string[] }) => Promise<boolean>;
+}
+declare global { interface Window { electronAPI?: ElectronAPI } }
+
 type CanSize = "355ml" | "475ml";
 type MaterialPreset = "matte" | "satin" | "glossy" | "chrome" | "custom";
 
@@ -593,11 +604,15 @@ function CanvasExporter({ captureRef, canSize }: {
       persp.position.copy(savedPos);
       persp.updateProjectionMatrix();
 
-      // ── Download ─────────────────────────────────────────────────────────────
-      const a = document.createElement("a");
-      a.download = `can-${canSize}.png`;
-      a.href = dataUrl;
-      a.click();
+      // ── Download (native dialog in Electron, browser download on web) ───────
+      if (window.electronAPI) {
+        window.electronAPI.savePng(dataUrl, `can-${canSize}.png`);
+      } else {
+        const a = document.createElement("a");
+        a.download = `can-${canSize}.png`;
+        a.href = dataUrl;
+        a.click();
+      }
     };
     return () => { captureRef.current = null; };
   }, [gl, scene, camera, canSize, captureRef]);
@@ -742,6 +757,21 @@ export default function Page() {
   const recordingAbortRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
 
+  // ── Load persistent history from Electron on first mount ──────────────────
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    window.electronAPI.getHistory().then((hist) => {
+      if (hist.images.length > 0) setRecentImages(hist.images);
+      if (hist.stickers.length > 0) setRecentStickers(hist.stickers);
+    });
+  }, []); // eslint-disable-line
+
+  // ── Sync history to Electron whenever it changes ───────────────────────────
+  useEffect(() => {
+    if (!window.electronAPI) return;
+    window.electronAPI.setHistory({ images: recentImages, stickers: recentStickers });
+  }, [recentImages, recentStickers]);
+
   // ── Handlers ──────────────────────────────────────────────────────────────
 
   const addImage = useCallback((dataUrl: string) => {
@@ -794,6 +824,30 @@ export default function Page() {
     const file = e.target.files?.[0];
     if (file) readFileAsImage(file);
   };
+
+  // Electron-aware upload trigger (uses native dialog when available)
+  const handleUploadLabelClick = useCallback(() => {
+    if (window.electronAPI) {
+      window.electronAPI.openImage("label").then((result) => {
+        if (result) addImage(result.dataUrl);
+      });
+    } else {
+      fileInputRef.current?.click();
+    }
+  }, [addImage]);
+
+  const handleUploadStickerClick = useCallback(() => {
+    if (window.electronAPI) {
+      window.electronAPI.openImage("sticker").then((result) => {
+        if (result) {
+          setStickerImage(result.dataUrl);
+          setRecentStickers(prev => [result.dataUrl, ...prev.filter(s => s !== result.dataUrl)].slice(0, 6));
+        }
+      });
+    } else {
+      stickerInputRef.current?.click();
+    }
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); };
   const handleDragLeave = () => setIsDragOver(false);
@@ -1351,7 +1405,7 @@ export default function Page() {
             <div className="px-4 pb-4 space-y-2">
               <div
                 onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handleUploadLabelClick}
                 className={`flex flex-col items-center justify-center gap-1.5 py-7 rounded-lg border cursor-pointer transition-all duration-150 ${
                   isDragOver ? "border-blue-400/60 bg-blue-400/[0.07]"
                   : customImage ? "border-green-400/40 bg-green-400/[0.05]"
@@ -1423,7 +1477,7 @@ export default function Page() {
           {openSections.sticker && (
             <div className="px-4 pb-4 space-y-2">
               <div
-                onClick={() => stickerInputRef.current?.click()}
+                onClick={handleUploadStickerClick}
                 className={`flex flex-col items-center justify-center gap-1.5 py-6 rounded-lg border cursor-pointer transition-all duration-150 ${
                   stickerImage ? "border-purple-400/40 bg-purple-400/[0.05]" : dropZoneIdle
                 }`}

@@ -1,5 +1,16 @@
 # Revising Notes
 
+## 2026-03-24 (Electron 데스크탑 앱 기반 구축)
+
+- [x] Electron 뼈대 추가 — `electron/main.ts`, `electron/preload.ts`, `electron/tsconfig.json`
+- [x] `electron-builder.yml` — macOS `.dmg` 패키징 (arm64 + x64), App Store 전환 주석 포함
+- [x] `next.config.mjs` — `ELECTRON=true` env로 static export 모드 분기 (`assetPrefix: "./"`)
+- [x] `package.json` — `electron:dev` / `electron:build` / `electron:pack` 스크립트 추가
+- [x] Electron IPC 핸들러 — `save-png` (네이티브 Save 다이얼로그 + Finder 오픈), `open-image`, `open-images-batch`, `save-pngs-batch` (배치 처리), `get-history` / `set-history` (영속 히스토리)
+- [x] `preload.ts` contextBridge — `window.electronAPI` 타입세이프 브릿지
+- [x] `page.tsx` — Electron API 연동: PNG 저장 네이티브 다이얼로그, 이미지/스티커 열기 네이티브 다이얼로그, 앱 재시작 후에도 최근 이미지/스티커 유지 (electron `userData`에 JSON 저장)
+- [x] `.gitignore` — `electron-dist/`, `dist-electron/` 추가
+
 ## 2026-03-24
 
 - [x] 이미지/스티커 회전 슬라이더 추가

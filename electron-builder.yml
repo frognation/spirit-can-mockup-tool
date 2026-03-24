@@ -1,0 +1,42 @@
+appId: com.spiritcaneditor.app
+productName: Spirit Can Editor
+copyright: Copyright © 2026
+
+# Compiled electron files go here
+main: electron-dist/main.js
+
+directories:
+  output: dist-electron
+  buildResources: electron/assets
+
+# Static Next.js export to include in app bundle
+files:
+  - electron-dist/**/*
+  - out/**/*
+  - package.json
+
+mac:
+  category: public.app-category.graphics-design
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  # For App Store later, change target to "mas" and add:
+  # type: distribution
+  # entitlements: electron/entitlements.mac.plist
+  # entitlementsInherit: electron/entitlements.mac.plist
+  # hardenedRuntime: true
+  # gatekeeperAssess: false
+
+dmg:
+  title: Spirit Can Editor
+  contents:
+    - x: 140
+      y: 150
+    - x: 380
+      y: 150
+      type: link
+      path: /Applications
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
