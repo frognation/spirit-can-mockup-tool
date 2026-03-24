@@ -1,5 +1,13 @@
 # Revising Notes
 
+## 2026-03-24 (문서 정리 — Figma 워크플로우)
+
+- [x] `03_Figma Workflow.md` 작성 — 코드↔Figma 양방향 워크플로우 정리
+  - html.to.design (Code → Figma 스냅샷 import)
+  - Dev Mode / 스크린샷 기반 (Figma → Code 수동 반영)
+  - 공식 Figma MCP / Framelink MCP / claude-talk-to-figma-mcp 비교
+  - 권장 조합 및 설치 방법 (한·영 병기, 유용한 링크 포함)
+
 ## 2026-03-24 (Electron 데스크탑 앱 기반 구축)
 
 - [x] Electron 뼈대 추가 — `electron/main.ts`, `electron/preload.ts`, `electron/tsconfig.json`
