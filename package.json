@@ -10,6 +10,7 @@
     "lint": "next lint",
     "electron:compile": "tsc -p electron/tsconfig.json",
     "electron:dev": "concurrently -k -n NEXT,ELECTRON -c cyan,yellow \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
+    "electron:dev:vscode": "ELECTRON_RUN_AS_NODE= concurrently -k -n NEXT,ELECTRON -c cyan,yellow \"next dev\" \"wait-on http://localhost:3000 && electron .\"",
     "electron:build": "ELECTRON=true next build && npm run electron:compile && electron-builder --mac",
     "electron:pack": "ELECTRON=true next build && npm run electron:compile && electron-builder --mac --dir"
   },
@@ -28,7 +29,7 @@
     "@types/three": "^0.171.0",
     "autoprefixer": "^10.4.19",
     "concurrently": "^9.1.2",
-    "electron": "^33.3.1",
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8",
     "eslint": "^8",
     "eslint-config-next": "14.2.22",
