@@ -2,9 +2,6 @@ appId: com.spiritcaneditor.app
 productName: Spirit Can Editor
 copyright: Copyright © 2026
 
-# Compiled electron files go here
-main: electron-dist/main.js
-
 directories:
   output: dist-electron
   buildResources: electron/assets
@@ -26,6 +23,8 @@ mac:
   # entitlementsInherit: electron/entitlements.mac.plist
   # hardenedRuntime: true
   # gatekeeperAssess: false
+
+artifactName: Spirit-Can-Editor-${arch}.${ext}
 
 dmg:
   title: Spirit Can Editor

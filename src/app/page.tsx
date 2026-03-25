@@ -1222,6 +1222,26 @@ export default function Page() {
   return (
     <div className="h-screen relative overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
 
+      {/* ── Desktop App Download Banner (web only) ── */}
+      {typeof window !== "undefined" && !window.electronAPI && (
+        <div className="absolute top-3 left-3 z-50 flex items-center gap-2">
+          <a
+            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit-Can-Editor-arm64.dmg"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-mono uppercase tracking-wider transition-opacity hover:opacity-75"
+            style={{ background: d ? "rgba(20,20,20,0.85)" : "rgba(240,240,240,0.92)", color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.6)", border: d ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(0,0,0,0.12)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", textDecoration: "none" }}
+          >
+            ↓ Desktop App
+          </a>
+          <a
+            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit-Can-Editor-x64.dmg"
+            className="flex items-center px-2 py-1.5 rounded-xl text-[10px] font-mono uppercase tracking-wider transition-opacity hover:opacity-75"
+            style={{ background: d ? "rgba(20,20,20,0.70)" : "rgba(240,240,240,0.75)", color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)", border: d ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.08)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", textDecoration: "none" }}
+          >
+            Intel
+          </a>
+        </div>
+      )}
+
       {/* ── 3D Canvas ── */}
       <div
         className="absolute inset-0 overflow-hidden"
