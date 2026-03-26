@@ -4,6 +4,8 @@ out
 dist
 dist-electron
 electron-dist
+build/
+release/
 .vercel
 .DS_Store
 *.log

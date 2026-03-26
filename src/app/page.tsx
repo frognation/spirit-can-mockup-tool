@@ -251,6 +251,7 @@ function EditableSodaCan({
   rotationSpeed,
   rotationResetRef,
   canDragRef,
+  showLabel = true,
 }: {
   customTexture?: string;
   rotation: [number, number, number];
@@ -277,6 +278,7 @@ function EditableSodaCan({
   rotationSpeed: number;
   rotationResetRef: React.MutableRefObject<boolean>;
   canDragRef: React.MutableRefObject<{ y: number; x: number }>;
+  showLabel?: boolean;
 }) {
   const { nodes } = useGLTF("/Soda-can.gltf");
 
@@ -397,10 +399,12 @@ function EditableSodaCan({
       <mesh castShadow={metalSettings.top.castShadow} receiveShadow={metalSettings.top.receiveShadow} geometry={metalGeo} material={topMetalMat} position-y={topOffsetLocal} />
       <mesh castShadow receiveShadow geometry={metalGeo} material={bodyMetalMat} scale={[1, sy, 1]} />
       <mesh castShadow={metalSettings.bottom.castShadow} receiveShadow={metalSettings.bottom.receiveShadow} geometry={metalGeo} material={bottomMetalMat} position-y={-bottomOffsetLocal} />
-      <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
-        <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} clippingPlanes={labelClipPlanes.current} clipShadows />
-      </mesh>
-      {stickerTexture && (
+      {showLabel && (
+        <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
+          <meshStandardMaterial roughness={labelRoughness} metalness={0.7} map={texture} polygonOffset polygonOffsetFactor={-2} polygonOffsetUnits={-2} clippingPlanes={labelClipPlanes.current} clipShadows />
+        </mesh>
+      )}
+      {showLabel && stickerTexture && (
         <mesh castShadow receiveShadow geometry={labelGeo} scale={[1, sy, 1]}>
           <meshStandardMaterial roughness={stickerRoughness} metalness={stickerMetalness} map={stickerTexture} transparent alphaTest={0.01} polygonOffset polygonOffsetFactor={-4} polygonOffsetUnits={-4} clippingPlanes={labelClipPlanes.current} clipShadows />
         </mesh>
@@ -671,7 +675,7 @@ function SliderRow({ label, value, min, max, step, onChange, display }: {
 
 interface HistoryState {
   customImage: string; imageScale: number; imageOffsetX: number; imageOffsetY: number;
-  imageRotation: number; imageInvert: boolean; bgColor: string;
+  imageRotation: number; imageInvert: boolean; bgColor: string; labelVisible: boolean;
   stickerImage: string; stickerScale: number; stickerOffsetX: number; stickerOffsetY: number;
   stickerRotation: number; stickerShadowIntensity: number; stickerRoughness: number; stickerMetalness: number;
   canSize: CanSize; labelRoughness: number; materialPreset: MaterialPreset; metalSettings: MetalSettings;
@@ -740,9 +744,15 @@ export default function Page() {
   const [levelEnabled, setLevelEnabled] = useState(true);
   const levelRef = useRef(true);
 
+  const [labelVisible, setLabelVisible] = useState(true);
+  const [isElectron, setIsElectron] = useState(false);
   const [isPreparingRecord, setIsPreparingRecord] = useState(false);
   const [relightMode, setRelightMode] = useState(false);
   const [isRelightDragging, setIsRelightDragging] = useState(false);
+
+  useEffect(() => {
+    setIsElectron(!!window.electronAPI);
+  }, []);
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", isDarkMode ? "dark" : "light");
@@ -776,6 +786,7 @@ export default function Page() {
 
   const addImage = useCallback((dataUrl: string) => {
     setCustomImage(dataUrl);
+    setLabelVisible(true);
     setRecentImages(prev => {
       const filtered = prev.filter(img => img !== dataUrl);
       return [dataUrl, ...filtered].slice(0, 6);
@@ -943,7 +954,7 @@ export default function Page() {
   const [canRedo, setCanRedo] = useState(false);
 
   const buildSnapshot = (): HistoryState => ({
-    customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor,
+    customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor, labelVisible,
     stickerImage, stickerScale, stickerOffsetX, stickerOffsetY, stickerRotation,
     stickerShadowIntensity, stickerRoughness, stickerMetalness,
     canSize, labelRoughness, materialPreset, metalSettings,
@@ -954,7 +965,7 @@ export default function Page() {
     skipHistoryRef.current = true;
     setCustomImage(s.customImage); setImageScale(s.imageScale); setImageOffsetX(s.imageOffsetX);
     setImageOffsetY(s.imageOffsetY); setImageRotation(s.imageRotation); setImageInvert(s.imageInvert);
-    setBgColor(s.bgColor); setStickerImage(s.stickerImage); setStickerScale(s.stickerScale);
+    setBgColor(s.bgColor); setLabelVisible(s.labelVisible ?? true); setStickerImage(s.stickerImage); setStickerScale(s.stickerScale);
     setStickerOffsetX(s.stickerOffsetX); setStickerOffsetY(s.stickerOffsetY); setStickerRotation(s.stickerRotation);
     setStickerShadowIntensity(s.stickerShadowIntensity); setStickerRoughness(s.stickerRoughness);
     setStickerMetalness(s.stickerMetalness); setCanSize(s.canSize); setLabelRoughness(s.labelRoughness);
@@ -983,7 +994,7 @@ export default function Page() {
       setCanUndo(historyIdxRef.current > 0);
       setCanRedo(false);
     }, 400);
-  }, [customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor, // eslint-disable-line
+  }, [customImage, imageScale, imageOffsetX, imageOffsetY, imageRotation, imageInvert, bgColor, labelVisible, // eslint-disable-line
       stickerImage, stickerScale, stickerOffsetX, stickerOffsetY, stickerRotation,
       stickerShadowIntensity, stickerRoughness, stickerMetalness,
       canSize, labelRoughness, materialPreset, metalSettings, rotation, cameraFov, lightingSettings, bar]);
@@ -1222,18 +1233,26 @@ export default function Page() {
   return (
     <div className="h-screen relative overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
 
+      {/* ── Electron Title Bar Drag Region ── */}
+      {isElectron && (
+        <div
+          className="absolute top-0 left-0 right-0 z-[100]"
+          style={{ height: 38, WebkitAppRegion: "drag" } as React.CSSProperties}
+        />
+      )}
+
       {/* ── Desktop App Download Banner (web only) ── */}
-      {typeof window !== "undefined" && !window.electronAPI && (
+      {!isElectron && (
         <div className="absolute top-3 left-3 z-50 flex items-center gap-2">
           <a
-            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit-Can-Editor-arm64.dmg"
+            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit.Can.Editor-2.0.0-arm64.dmg"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-[11px] font-mono uppercase tracking-wider transition-opacity hover:opacity-75"
             style={{ background: d ? "rgba(20,20,20,0.85)" : "rgba(240,240,240,0.92)", color: d ? "rgba(255,255,255,0.7)" : "rgba(0,0,0,0.6)", border: d ? "1px solid rgba(255,255,255,0.12)" : "1px solid rgba(0,0,0,0.12)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", textDecoration: "none" }}
           >
             ↓ Desktop App
           </a>
           <a
-            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit-Can-Editor-x64.dmg"
+            href="https://github.com/frognation/CanEditor_Original/releases/latest/download/Spirit.Can.Editor-2.0.0.dmg"
             className="flex items-center px-2 py-1.5 rounded-xl text-[10px] font-mono uppercase tracking-wider transition-opacity hover:opacity-75"
             style={{ background: d ? "rgba(20,20,20,0.70)" : "rgba(240,240,240,0.75)", color: d ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.4)", border: d ? "1px solid rgba(255,255,255,0.08)" : "1px solid rgba(0,0,0,0.08)", backdropFilter: "blur(12px)", WebkitBackdropFilter: "blur(12px)", textDecoration: "none" }}
           >
@@ -1301,6 +1320,7 @@ export default function Page() {
             stickerRotation={stickerRotation}
             stickerRoughness={stickerRoughness} stickerMetalness={stickerMetalness} stickerShadowIntensity={stickerShadowIntensity}
             rotationSpeed={rotationSpeed} rotationResetRef={rotationResetRef} canDragRef={canDragRef}
+            showLabel={labelVisible}
           />
           <CustomOrbitControls controlsRef={controlsRef} />
           <CanDragRotator canDragRef={canDragRef} dragVelocityRef={dragVelocityRef} relightModeRef={relightModeRef} levelRef={levelRef} />
@@ -1380,10 +1400,10 @@ export default function Page() {
       {/* ── Right Sidebar ── */}
       <div
         className="absolute top-0 right-0 h-full overflow-y-auto flex flex-col"
-        style={{ width: "272px", background: d ? "rgba(7,7,7,0.97)" : "rgba(242,242,242,0.98)", borderLeft: d ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.08)" }}
+        style={{ width: "272px", background: d ? "rgba(7,7,7,0.97)" : "rgba(242,242,242,0.98)", borderLeft: d ? "1px solid rgba(255,255,255,0.07)" : "1px solid rgba(0,0,0,0.08)", ...(isElectron ? { WebkitAppRegion: "no-drag" } as React.CSSProperties : {}) }}
       >
         {/* Header */}
-        <div className="px-4 pt-5 pb-4">
+        <div className="px-4 pb-4" style={{ paddingTop: isElectron ? 42 : 20 }}>
           <div className={`font-mono text-[12px] uppercase tracking-[0.22em] ${d ? "text-white" : "text-black/75"}`}>Spirit Can Editor</div>
           <div className={`font-mono text-[10px] tracking-[0.12em] mt-1 ${d ? "text-white/25" : "text-black/30"}`}>2.0</div>
         </div>
@@ -1432,11 +1452,17 @@ export default function Page() {
                   : dropZoneIdle
                 }`}
               >
-                <div className={`font-mono text-[11px] uppercase tracking-wider ${customImage ? "text-green-500/70" : d ? "text-white/35" : "text-black/40"}`}>
-                  {isDragOver ? "Drop image" : customImage ? "✓  Image loaded" : "Drop or click to upload"}
+                <div className={`font-mono text-[11px] uppercase tracking-wider ${customImage ? "text-green-500/70" : !labelVisible ? (d ? "text-white/25" : "text-black/25") : d ? "text-white/35" : "text-black/40"}`}>
+                  {isDragOver ? "Drop image" : customImage ? "✓  Image loaded" : !labelVisible ? "Label unloaded" : "Drop or click to upload"}
                 </div>
                 <div className={`font-mono text-[9px] uppercase ${d ? "text-white/20" : "text-black/25"}`}>PNG · JPG · Ctrl+V</div>
               </div>
+              {/* Unload / Show Label toggle */}
+              {!labelVisible ? (
+                <button onClick={() => setLabelVisible(true)} className={`${removeBtn} border-blue-400/40 text-blue-400/70`}>Show Label</button>
+              ) : !customImage ? (
+                <button onClick={() => setLabelVisible(false)} className={removeBtn}>Unload Label</button>
+              ) : null}
               {/* Optimal size info */}
               <div className={infoCard}>
                 <span className={subLabelSm}>Optimal size</span>
@@ -1456,7 +1482,7 @@ export default function Page() {
                     {imageInvert ? "Invert: ON" : "Invert Colors"}
                   </button>
                   <button onClick={() => removeBackground(customImage, "image")} className={removeBtn}>Remove Background</button>
-                  <button onClick={() => { setCustomImage(""); setImageScale(1.0); setImageOffsetX(0); setImageOffsetY(0); setImageRotation(0); setImageInvert(false); }} className={removeBtn}>Remove Image</button>
+                  <button onClick={() => { setCustomImage(""); setImageScale(1.0); setImageOffsetX(0); setImageOffsetY(0); setImageRotation(0); setImageInvert(false); setLabelVisible(false); }} className={removeBtn}>Unload Image</button>
                 </>
               )}
               {/* Recent images */}
@@ -1465,7 +1491,7 @@ export default function Page() {
                   <div className={`mb-1.5 ${subLabelSm}`}>Recent</div>
                   <div className="flex flex-wrap gap-1.5">
                     {recentImages.map((img, i) => (
-                      <button key={i} onClick={() => setCustomImage(img)} title={`Recent image ${i + 1}`}
+                      <button key={i} onClick={() => { setCustomImage(img); setLabelVisible(true); }} title={`Recent image ${i + 1}`}
                         className={`w-11 h-11 rounded overflow-hidden border transition-all duration-150 flex-shrink-0 ${
                           customImage === img ? "border-blue-400/70 ring-1 ring-blue-400/30"
                           : d ? "border-white/[0.14] hover:border-white/35 opacity-70 hover:opacity-100"
@@ -1518,7 +1544,7 @@ export default function Page() {
                   <SliderRow label="Roughness" value={stickerRoughness} min={0} max={1} step={0.01} onChange={setStickerRoughness} display={v => v.toFixed(2)} />
                   <SliderRow label="Metalness" value={stickerMetalness} min={0} max={1} step={0.01} onChange={setStickerMetalness} display={v => v.toFixed(2)} />
                   <button onClick={() => removeBackground(stickerImage, "sticker")} className={removeBtn}>Remove Background</button>
-                  <button onClick={() => { setStickerImage(""); setStickerScale(1.0); setStickerOffsetX(0); setStickerOffsetY(0); setStickerRotation(0); setStickerShadowIntensity(0.3); }} className={removeBtn}>Remove Sticker</button>
+                  <button onClick={() => { setStickerImage(""); setStickerScale(1.0); setStickerOffsetX(0); setStickerOffsetY(0); setStickerRotation(0); setStickerShadowIntensity(0.3); }} className={removeBtn}>Unload Sticker</button>
                 </>
               )}
               {/* Recent stickers */}

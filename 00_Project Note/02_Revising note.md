@@ -1,5 +1,16 @@
 # Revising Notes
 
+## 2026-03-26
+
+- [x] Electron 창 드래그 이동 — 타이틀바 영역(`-webkit-app-region: drag`) 추가, 사이드바는 `no-drag` 처리
+- [x] 라벨 Unload / Show Label 토글 — 빈 캔(라벨 없음) 상태 전환 기능
+- [x] 이미지 Unload Image 버튼 — 이미지 제거 + 라벨 숨김 동시 처리
+- [x] Hydration 에러 수정 — `isElectron`을 `useEffect` 마운트 후 `useState`로 관리하여 SSR/CSR 불일치 해소
+- [x] UI Design Base 추가 — `ui-design-base/` 폴더에 순수 HTML/CSS/JS UI 뼈대 생성 (다른 프로젝트 디자인 참조용, 3D·Electron·녹화 등 무거운 기능 제외)
+  - `index.html` — 사이드바 + 하단 HUD 전체 레이아웃
+  - `style.css` — CSS 변수 기반 다크/라이트 테마 시스템
+  - `script.js` — 아코디언 토글, 테마 전환, 인터랙티브 UI 데모
+
 ## 2026-03-24 (문서 정리 — Figma 워크플로우)
 
 - [x] `03_Figma Workflow.md` 작성 — 코드↔Figma 양방향 워크플로우 정리
