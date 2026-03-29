@@ -240,6 +240,7 @@ function EditableSodaCan({
   imageRotation,
   imageInvert,
   bgColor,
+  metalMatchBg = false,
   stickerImage,
   stickerScale,
   stickerOffsetX,
@@ -267,6 +268,7 @@ function EditableSodaCan({
   imageRotation: number;
   imageInvert: boolean;
   bgColor: string;
+  metalMatchBg?: boolean;
   stickerImage?: string;
   stickerScale: number;
   stickerOffsetX: number;
@@ -378,10 +380,11 @@ function EditableSodaCan({
             receiveShadow: true,
             envMapIntensity: (metalSettings.top.envMapIntensity + metalSettings.bottom.envMapIntensity) / 2,
           };
+    const useColor = metalMatchBg && (part === "top" || part === "bottom") ? bgColor : cfg.color;
     return new THREE.MeshStandardMaterial({
       roughness: cfg.roughness,
       metalness: 1,
-      color: colorWithBrightness(cfg.color, cfg.brightness),
+      color: colorWithBrightness(useColor, cfg.brightness),
       emissive: new THREE.Color("#ffffff"),
       emissiveIntensity: cfg.emissiveIntensity,
       envMapIntensity: cfg.envMapIntensity,
@@ -577,8 +580,9 @@ function CanvasExporter({ captureRef, canSize }: {
 
   useEffect(() => {
     captureRef.current = () => {
-      // ── 1920×1920 square, zoom-independent (reset to canonical camera pos) ──
-      const OUT = 1920;
+      // ── 1920 wide, taller for 475ml to avoid clipping ──
+      const OUT_W = 1920;
+      const OUT_H = canSize === "475ml" ? 2400 : 1920;
 
       const savedPixelRatio = gl.getPixelRatio();
       const savedCssW = gl.domElement.width / savedPixelRatio;
@@ -589,15 +593,17 @@ function CanvasExporter({ captureRef, canSize }: {
       const savedPos = persp.position.clone();
 
       // Reset zoom: put camera at the canonical distance for this FOV
+      // Pull camera back for 475ml (27% taller can)
       const baseFov = 25, baseZ = 4;
+      const tallFactor = canSize === "475ml" ? 1.3 : 1.0;
       const canonZ = (baseZ * Math.tan(THREE.MathUtils.degToRad(baseFov / 2))) /
-                     Math.tan(THREE.MathUtils.degToRad(persp.fov / 2));
+                     Math.tan(THREE.MathUtils.degToRad(persp.fov / 2)) * tallFactor;
       persp.position.set(0, 0, canonZ);
-      persp.aspect = 1; // square
+      persp.aspect = OUT_W / OUT_H;
       persp.updateProjectionMatrix();
 
       gl.setPixelRatio(1);
-      gl.setSize(OUT, OUT, false);
+      gl.setSize(OUT_W, OUT_H, false);
       gl.render(scene, camera);
       const dataUrl = gl.domElement.toDataURL("image/png");
 
@@ -736,6 +742,7 @@ export default function Page() {
   const [imageRotation, setImageRotation] = useState(0);
   const [imageInvert, setImageInvert] = useState(false);
   const [bgColor, setBgColor] = useState("#c6c6c8");
+  const [metalMatchBg, setMetalMatchBg] = useState(false);
   const [stickerRotation, setStickerRotation] = useState(0);
   const [recentStickers, setRecentStickers] = useState<string[]>([]);
   const canDragRef = useRef({ y: 0, x: 0 });
@@ -1314,7 +1321,7 @@ export default function Page() {
             isAutoRotating={isAutoRotating} isRecording={isRecording} recordingProgress={recordingProgress}
             canSize={canSize} labelRoughness={labelRoughness} metalSettings={metalSettings}
             imageScale={imageScale} imageOffsetX={imageOffsetX} imageOffsetY={imageOffsetY}
-            imageRotation={imageRotation} imageInvert={imageInvert} bgColor={bgColor}
+            imageRotation={imageRotation} imageInvert={imageInvert} bgColor={bgColor} metalMatchBg={metalMatchBg}
             stickerImage={stickerImage || undefined}
             stickerScale={stickerScale} stickerOffsetX={stickerOffsetX} stickerOffsetY={stickerOffsetY}
             stickerRotation={stickerRotation}
@@ -1478,6 +1485,9 @@ export default function Page() {
                     <span className={subLabelSm}>BG Color</span>
                     <input type="color" value={bgColor} onChange={e => setBgColor(e.target.value)} className="w-8 h-6 rounded cursor-pointer border-0 bg-transparent p-0" />
                   </div>
+                  <button onClick={() => setMetalMatchBg(v => !v)} className={`${removeBtn} ${metalMatchBg ? (d ? "border-white/30 text-white/70" : "border-black/30 text-black/70") : ""}`}>
+                    {metalMatchBg ? "Metal Match BG: ON" : "Metal Match BG"}
+                  </button>
                   <button onClick={() => setImageInvert(v => !v)} className={`${removeBtn} ${imageInvert ? (d ? "border-white/30 text-white/70" : "border-black/30 text-black/70") : ""}`}>
                     {imageInvert ? "Invert: ON" : "Invert Colors"}
                   </button>
