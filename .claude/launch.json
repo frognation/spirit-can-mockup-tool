@@ -3,20 +3,20 @@
   "configurations": [
     {
       "name": "Next.js Dev",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeExecutable": "/Users/basedesign/Documents/GitHub/Projects/spirit-can-mockup-tool/node_modules/.bin/next",
+      "runtimeArgs": ["dev"],
       "port": 3000
     },
     {
       "name": "Electron + Next.js Dev",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/opt/homebrew/bin/npm",
       "runtimeArgs": ["run", "electron:dev"],
       "port": 3000
     },
     {
       "name": "Next.js Production",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "start"],
+      "runtimeExecutable": "/Users/basedesign/Documents/GitHub/Projects/spirit-can-mockup-tool/node_modules/.bin/next",
+      "runtimeArgs": ["start"],
       "port": 3000
     }
   ]

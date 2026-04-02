@@ -689,20 +689,20 @@ interface HistoryState {
 }
 
 const DEFAULT_METAL: MetalSettings = {
-  top: { color: "#c7c7c7", brightness: 1.35, roughness: 0.48, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.4 },
-  bottom: { color: "#b8b8b8", brightness: 1.4, roughness: 0.46, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.5 },
+  top: { color: "#c7c7c7", brightness: 1.75, roughness: 0.57, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.4 },
+  bottom: { color: "#b8b8b8", brightness: 1.80, roughness: 0.50, emissiveIntensity: 0.01, castShadow: false, receiveShadow: true, envMapIntensity: 1.4 },
 };
 const DEFAULT_LIGHTING: LightingSettings = {
-  exposure: 1.43, envIntensity: 2.32, ambientIntensity: 2.7,
-  fillLightIntensity: 4.3, fillLightPosition: [5, 0, 5],
-  rimLightIntensity: 5.6, rimLightPosition: [-5, 0, 5],
-  directionalIntensity: 4.2, directionalPosition: [1000, 500, 500],
-  otherRotation: (130 * Math.PI) / 180, otherStrength: 1.61,
+  exposure: 2.49, envIntensity: 2.32, ambientIntensity: 2.5,
+  fillLightIntensity: 3.9, fillLightPosition: [5, 0, 5],
+  rimLightIntensity: 0.0, rimLightPosition: [-5, 0, 5],
+  directionalIntensity: 4.4, directionalPosition: [1000, 500, 500],
+  otherRotation: (253 * Math.PI) / 180, otherStrength: 0.80,
 };
 const DEFAULT_BAR: BarSettings = {
-  enabled: true, color: "#fafafa", intensity: 1.1,
-  width: 10.1, height: 11.1, distance: 3.6,
-  rotation: Math.PI * 2, y: -1.91,
+  enabled: true, color: "#fafafa", intensity: 0.2,
+  width: 3.6, height: 7.3, distance: 1.7,
+  rotation: (198 * Math.PI) / 180, y: 0.32,
 };
 
 export default function Page() {
@@ -713,14 +713,14 @@ export default function Page() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingProgress, setRecordingProgress] = useState(0);
   const [canSize, setCanSize] = useState<CanSize>("355ml");
-  const [labelRoughness, setLabelRoughness] = useState<number>(0.21);
+  const [labelRoughness, setLabelRoughness] = useState<number>(0.22);
   const [metalSettings, setMetalSettings] = useState<MetalSettings>(DEFAULT_METAL);
   const [lightingSettings, setLightingSettings] = useState<LightingSettings>(DEFAULT_LIGHTING);
   const [bar, setBar] = useState<BarSettings>(DEFAULT_BAR);
   const [cameraFov, setCameraFov] = useState<number>(10);
 
   // New state
-  const [materialPreset, setMaterialPreset] = useState<MaterialPreset>("satin");
+  const [materialPreset, setMaterialPreset] = useState<MaterialPreset>("custom");
   const [isDragOver, setIsDragOver] = useState(false);
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
   const [lightingAdvancedOpen, setLightingAdvancedOpen] = useState(false);
@@ -742,7 +742,7 @@ export default function Page() {
   const [imageRotation, setImageRotation] = useState(0);
   const [imageInvert, setImageInvert] = useState(false);
   const [bgColor, setBgColor] = useState("#c6c6c8");
-  const [metalMatchBg, setMetalMatchBg] = useState(false);
+  const [metalMatchBg, setMetalMatchBg] = useState(true);
   const [stickerRotation, setStickerRotation] = useState(0);
   const [recentStickers, setRecentStickers] = useState<string[]>([]);
   const canDragRef = useRef({ y: 0, x: 0 });
@@ -937,7 +937,7 @@ export default function Page() {
     setIsAutoRotating(true);
     setIsRecording(false);
     setRecordingProgress(0);
-    setLabelRoughness(0.21);
+    setLabelRoughness(0.22);
     setCanSize("355ml");
     setMetalSettings(DEFAULT_METAL);
     setLightingSettings(DEFAULT_LIGHTING);
@@ -945,7 +945,8 @@ export default function Page() {
     controlsRef.current?.reset();
     setCameraFov(10);
     setSelectedFlavor("none");
-    setMaterialPreset("satin");
+    setMaterialPreset("custom");
+    setMetalMatchBg(true);
   };
 
   // Keep relightModeRef in sync so CanDragRotator sees latest value without stale closure
