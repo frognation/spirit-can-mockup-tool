@@ -253,6 +253,10 @@ function EditableSodaCan({
   rotationResetRef,
   canDragRef,
   showLabel = true,
+  zoetropeEnabled = false,
+  zoetropeFrames = 12,
+  zoetropeSlitWidth = 0.3,
+  zoetropeVisibleRef,
 }: {
   customTexture?: string;
   rotation: [number, number, number];
@@ -281,6 +285,10 @@ function EditableSodaCan({
   rotationResetRef: React.MutableRefObject<boolean>;
   canDragRef: React.MutableRefObject<{ y: number; x: number }>;
   showLabel?: boolean;
+  zoetropeEnabled?: boolean;
+  zoetropeFrames?: number;
+  zoetropeSlitWidth?: number;
+  zoetropeVisibleRef?: React.MutableRefObject<boolean>;
 }) {
   const { nodes } = useGLTF("/Soda-can.gltf");
 
@@ -306,6 +314,13 @@ function EditableSodaCan({
       groupRef.current.rotation.y = (recordingProgress / 100) * Math.PI * 2;
     } else if (isAutoRotating) {
       groupRef.current.rotation.y += delta * 0.5 * rotationSpeed;
+      // Zoetrope strobe effect
+      if (zoetropeEnabled && zoetropeVisibleRef) {
+        const angle = ((groupRef.current.rotation.y % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+        const slotAngle = (Math.PI * 2) / zoetropeFrames;
+        const posInSlot = (angle % slotAngle) / slotAngle;
+        zoetropeVisibleRef.current = posInSlot < zoetropeSlitWidth;
+      }
     } else {
       // Drag rotation + slider offset — camera stays fixed so lighting stays fixed
       groupRef.current.rotation.y = canDragRef.current.y + rotation[1];
@@ -572,15 +587,16 @@ function CanDragRotator({
 // Just scales the buffer up to exportH=2000 at the same viewport aspect ratio,
 // renders once via the normal pipeline, then crops + scales to 1200px height.
 
-function CanvasExporter({ captureRef, canSize }: {
+function CanvasExporter({ captureRef, copyRef, canSize }: {
   captureRef: React.MutableRefObject<(() => void) | null>;
+  copyRef: React.MutableRefObject<(() => void) | null>;
   canSize: string;
 }) {
   const { gl, scene, camera } = useThree();
 
   useEffect(() => {
-    captureRef.current = () => {
-      // ── 1920 wide, taller for 475ml to avoid clipping ──
+    // ── Shared render-to-dataUrl helper ──────────────────────────────────────
+    const renderToDataUrl = (): string => {
       const OUT_W = 1920;
       const OUT_H = canSize === "475ml" ? 2400 : 1920;
 
@@ -592,8 +608,6 @@ function CanvasExporter({ captureRef, canSize }: {
       const savedAspect = persp.aspect;
       const savedPos = persp.position.clone();
 
-      // Reset zoom: put camera at the canonical distance for this FOV
-      // Pull camera back for 475ml (27% taller can)
       const baseFov = 25, baseZ = 4;
       const tallFactor = canSize === "475ml" ? 1.3 : 1.0;
       const canonZ = (baseZ * Math.tan(THREE.MathUtils.degToRad(baseFov / 2))) /
@@ -607,27 +621,69 @@ function CanvasExporter({ captureRef, canSize }: {
       gl.render(scene, camera);
       const dataUrl = gl.domElement.toDataURL("image/png");
 
-      // ── Restore ─────────────────────────────────────────────────────────────
       gl.setPixelRatio(savedPixelRatio);
       gl.setSize(savedCssW, savedCssH, false);
       persp.aspect = savedAspect;
       persp.position.copy(savedPos);
       persp.updateProjectionMatrix();
 
-      // ── Download (native dialog in Electron, browser download on web) ───────
+      return dataUrl;
+    };
+
+    // ── Save to file ────────────────────────────────────────────────────────
+    captureRef.current = () => {
+      const dataUrl = renderToDataUrl();
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+      const fileName = `${stamp}_${canSize}.png`;
+
       if (window.electronAPI) {
-        window.electronAPI.savePng(dataUrl, `can-${canSize}.png`);
+        window.electronAPI.savePng(dataUrl, fileName);
       } else {
         const a = document.createElement("a");
-        a.download = `can-${canSize}.png`;
+        a.download = fileName;
         a.href = dataUrl;
         a.click();
       }
     };
-    return () => { captureRef.current = null; };
-  }, [gl, scene, camera, canSize, captureRef]);
+
+    // ── Copy to clipboard (⌘C) ──────────────────────────────────────────────
+    copyRef.current = () => {
+      const dataUrl = renderToDataUrl();
+      const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+      const byteString = atob(base64);
+      const ab = new ArrayBuffer(byteString.length);
+      const ia = new Uint8Array(ab);
+      for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
+      const blob = new Blob([ab], { type: "image/png" });
+      navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    };
+
+    return () => { captureRef.current = null; copyRef.current = null; };
+  }, [gl, scene, camera, canSize, captureRef, copyRef]);
 
   return null;
+}
+
+// ─── Zoetrope Strobe Overlay ─────────────────────────────────────────────────
+function ZoetropeOverlay({ visibleRef }: { visibleRef: React.MutableRefObject<boolean> }) {
+  const overlayRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let raf: number;
+    const loop = () => {
+      if (overlayRef.current) {
+        overlayRef.current.style.opacity = visibleRef.current ? "0" : "1";
+      }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [visibleRef]);
+  return (
+    <div ref={overlayRef} className="absolute inset-0 z-30 pointer-events-none transition-none"
+      style={{ background: "#000" }} />
+  );
 }
 
 // ─── UI Helper ────────────────────────────────────────────────────────────────
@@ -733,6 +789,10 @@ export default function Page() {
   const [stickerMetalness, setStickerMetalness] = useState(0.0);
   const [stickerShadowIntensity, setStickerShadowIntensity] = useState(0.3);
   const [rotationSpeed, setRotationSpeed] = useState(1.0);
+  const [zoetropeEnabled, setZoetropeEnabled] = useState(false);
+  const [zoetropeFrames, setZoetropeFrames] = useState(12);
+  const [zoetropeSlitWidth, setZoetropeSlitWidth] = useState(0.3);
+  const zoetropeVisibleRef = useRef(true);
   const [pasteTarget, setPasteTarget] = useState<"label" | "sticker">("label");
   const [recentImages, setRecentImages] = useState<string[]>([]);
   const [isDarkMode, setIsDarkMode] = useState(true);
@@ -770,6 +830,8 @@ export default function Page() {
   const presetInputRef = useRef<HTMLInputElement>(null);
   const controlsRef = useRef<any>(null);
   const captureRef = useRef<(() => void) | null>(null);
+  const copyRef = useRef<(() => void) | null>(null);
+  const [toastMsg, setToastMsg] = useState<string | null>(null);
   const rotationResetRef = useRef(false);
   const recordingAbortRef = useRef(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -1025,13 +1087,25 @@ export default function Page() {
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.key !== "z") return;
-      e.preventDefault();
-      if (e.shiftKey) redo(); else undo();
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      } else if (e.key === "c") {
+        e.preventDefault();
+        copyRef.current?.();
+        setToastMsg("Image copied to clipboard");
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [undo, redo]);
+
+  useEffect(() => {
+    if (!toastMsg) return;
+    const t = setTimeout(() => setToastMsg(null), 3000);
+    return () => clearTimeout(t);
+  }, [toastMsg]);
 
   // ── Remove background (flood-fill from corners) ─────────────────────────────
   const removeBackground = useCallback((src: string, target: "image" | "sticker") => {
@@ -1095,7 +1169,10 @@ export default function Page() {
     const blob = new Blob([JSON.stringify(buildSettings(), null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `can-editor-preset.json`; a.click();
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    a.href = url; a.download = `${stamp}-preset.json`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -1241,6 +1318,17 @@ export default function Page() {
   return (
     <div className="h-screen relative overflow-hidden" style={{ background: d ? "#000" : "#f0f0f0" }}>
 
+      {/* ── Toast ── */}
+      {toastMsg && (
+        <div className="absolute inset-0 z-[200] flex items-center justify-center pointer-events-none">
+          <div className="pointer-events-auto flex items-center gap-3 px-6 py-3 rounded-full text-sm font-medium tracking-wide uppercase animate-[fadeInOut_3s_ease-in-out_forwards]"
+            style={{ background: "rgba(10,14,20,0.85)", color: "#c8cdd4", border: "1.5px solid rgba(100,120,140,0.4)", backdropFilter: "blur(12px)", letterSpacing: "0.08em" }}>
+            <span>{toastMsg}</span>
+            <button onClick={() => setToastMsg(null)} className="ml-1 text-[#6b7280] hover:text-white transition-colors text-base leading-none">&times;</button>
+          </div>
+        </div>
+      )}
+
       {/* ── Electron Title Bar Drag Region ── */}
       {isElectron && (
         <div
@@ -1329,12 +1417,16 @@ export default function Page() {
             stickerRoughness={stickerRoughness} stickerMetalness={stickerMetalness} stickerShadowIntensity={stickerShadowIntensity}
             rotationSpeed={rotationSpeed} rotationResetRef={rotationResetRef} canDragRef={canDragRef}
             showLabel={labelVisible}
+            zoetropeEnabled={zoetropeEnabled} zoetropeFrames={zoetropeFrames} zoetropeSlitWidth={zoetropeSlitWidth} zoetropeVisibleRef={zoetropeVisibleRef}
           />
           <CustomOrbitControls controlsRef={controlsRef} />
           <CanDragRotator canDragRef={canDragRef} dragVelocityRef={dragVelocityRef} relightModeRef={relightModeRef} levelRef={levelRef} />
           <RotatingEnvironment barRotation={bar.rotation} otherRotation={lightingSettings.otherRotation} intensity={lightingSettings.envIntensity} bar={bar} />
-          <CanvasExporter captureRef={captureRef} canSize={canSize} />
+          <CanvasExporter captureRef={captureRef} copyRef={copyRef} canSize={canSize} />
         </Canvas>
+
+        {/* ── Zoetrope strobe overlay ── */}
+        {zoetropeEnabled && <ZoetropeOverlay visibleRef={zoetropeVisibleRef} />}
 
         {/* ── Bottom Center HUD ── */}
         <div className="absolute bottom-5 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 px-3 py-2 rounded-2xl"
@@ -1360,7 +1452,7 @@ export default function Page() {
           </button>
           {/* Speed slider */}
           <div className="flex items-center gap-1.5 px-1">
-            <input type="range" min={0.2} max={3} step={0.1} value={rotationSpeed} onChange={e => setRotationSpeed(parseFloat(e.target.value))} className="w-16 h-0.5 accent-blue-400" />
+            <input type="range" min={0.2} max={20} step={0.1} value={rotationSpeed} onChange={e => setRotationSpeed(parseFloat(e.target.value))} className="w-16 h-0.5 accent-blue-400" />
             <span className="font-mono text-[9px] w-7 tabular-nums" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)" }}>{rotationSpeed.toFixed(1)}×</span>
           </div>
           {/* Divider */}
@@ -1382,6 +1474,28 @@ export default function Page() {
             className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording ? "opacity-30 cursor-not-allowed" : ""} ${relightMode ? "border-amber-400/55 bg-amber-400/[0.12] text-amber-300/85" : ""}`}
             style={!relightMode ? { border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" } : {}}
           >◉</button>
+          {/* Zoetrope mode */}
+          <button
+            onClick={() => { setZoetropeEnabled(v => !v); if (!isAutoRotating) setIsAutoRotating(true); }}
+            title="Zoetrope — strobe animation effect"
+            className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${zoetropeEnabled ? "border-violet-400/55 bg-violet-400/[0.12] text-violet-300/85" : ""}`}
+            style={!zoetropeEnabled ? { border: d ? "1px solid rgba(255,255,255,0.14)" : "1px solid rgba(0,0,0,0.14)", color: d ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.5)" } : {}}
+          >Zoetrope</button>
+          {zoetropeEnabled && (
+            <>
+              <div className="flex items-center gap-1 px-1">
+                <span className="font-mono text-[8px] uppercase" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.3)" }}>F</span>
+                <input type="range" min={2} max={36} step={1} value={zoetropeFrames} onChange={e => setZoetropeFrames(parseInt(e.target.value))} className="w-10 h-0.5 accent-violet-400" />
+                <span className="font-mono text-[9px] w-4 tabular-nums" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)" }}>{zoetropeFrames}</span>
+              </div>
+              <div className="flex items-center gap-1 px-1">
+                <span className="font-mono text-[8px] uppercase" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.3)" }}>W</span>
+                <input type="range" min={0.05} max={0.8} step={0.05} value={zoetropeSlitWidth} onChange={e => setZoetropeSlitWidth(parseFloat(e.target.value))} className="w-10 h-0.5 accent-violet-400" />
+                <span className="font-mono text-[9px] w-7 tabular-nums" style={{ color: d ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.35)" }}>{(zoetropeSlitWidth * 100).toFixed(0)}%</span>
+              </div>
+            </>
+          )}
+          <div className="w-px h-5 mx-0.5" style={{ background: d ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)" }} />
           {/* PNG export */}
           <button onClick={saveToPNG} disabled={isRecording || isPreparingRecord}
             className={`px-2.5 py-1.5 rounded-lg font-mono text-[10px] uppercase tracking-wider border transition-all duration-150 ${isRecording || isPreparingRecord ? "opacity-30 cursor-not-allowed" : ""}`}

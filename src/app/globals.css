@@ -67,3 +67,11 @@ input[type="color"] {
 [data-theme="light"] input[type="color"] { border-color: rgba(0,0,0,0.18); }
 input[type="color"]::-webkit-color-swatch-wrapper { padding: 2px; }
 input[type="color"]::-webkit-color-swatch { border: none; border-radius: 2px; }
+
+/* Toast fade-in-out */
+@keyframes fadeInOut {
+  0%   { opacity: 0; transform: translateY(-8px); }
+  10%  { opacity: 1; transform: translateY(0); }
+  85%  { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-8px); }
+}

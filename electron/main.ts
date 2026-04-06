@@ -72,20 +72,11 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
-// ── IPC: Save PNG via native dialog ─────────────────────────────────────────
+// ── IPC: Save PNG directly to Downloads ─────────────────────────────────────
 ipcMain.handle("save-png", async (_event, dataUrl: string, defaultName: string) => {
-  const win = BrowserWindow.getFocusedWindow();
-  if (!win) return { success: false };
-
-  const { canceled, filePath } = await dialog.showSaveDialog(win, {
-    title: "Save PNG",
-    defaultPath: path.join(app.getPath("downloads"), defaultName),
-    filters: [{ name: "PNG Image", extensions: ["png"] }],
-  });
-
-  if (canceled || !filePath) return { success: false };
-
   try {
+    const downloadsDir = app.getPath("downloads");
+    const filePath = path.join(downloadsDir, defaultName);
     const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
     fs.writeFileSync(filePath, Buffer.from(base64, "base64"));
     // Reveal in Finder
